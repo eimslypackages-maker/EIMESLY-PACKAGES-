@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // GitHub Pages project-site path
+    base: '/EIMESLY-PACKAGES-/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
