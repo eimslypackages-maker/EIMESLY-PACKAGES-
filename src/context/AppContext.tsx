@@ -46,6 +46,21 @@ interface AppContextValue {
   refreshBootstrap: () => Promise<void>;
 }
 
+const APP_BASE_PATH = '/EIMESLY-PACKAGES-';
+
+function getAppPath() {
+  const pathname = window.location.pathname;
+  const appPath = pathname.startsWith(APP_BASE_PATH)
+    ? pathname.slice(APP_BASE_PATH.length) || '/'
+    : pathname;
+  return appPath + window.location.search;
+}
+
+function getBrowserPath(to: string) {
+  const target = to.startsWith('/') ? to : `/${to}`;
+  return `${APP_BASE_PATH}${target === '/' ? '/' : target}`;
+}
+
 const AppContext = createContext<AppContextValue | null>(null);
 
 export function useDocumentMeta(title: string, description?: string) {
@@ -71,7 +86,7 @@ export function useDocumentMeta(title: string, description?: string) {
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [path, setPath] = useState<string>(
-    () => window.location.pathname + window.location.search
+    () => getAppPath()
   );
   const [user, setUser] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -80,8 +95,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const navigate = useCallback((to: string) => {
     const target = to.startsWith('/') ? to : `/${to}`;
-    if (window.location.pathname + window.location.search !== target) {
-      window.history.pushState({}, '', target);
+    const browserTarget = getBrowserPath(target);
+    if (window.location.pathname + window.location.search !== browserTarget) {
+      window.history.pushState({}, '', browserTarget);
       setPath(target);
       window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
     }
@@ -89,7 +105,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const onPop = () => {
-      setPath(window.location.pathname + window.location.search);
+      setPath(getAppPath());
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
