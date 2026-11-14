@@ -1,6 +1,6 @@
 import { apiFetch } from './api';
 
-async function fileToCompressedBase64(
+export async function fileToCompressedBase64(
   file: File
 ): Promise<{ dataBase64: string; mimeType: string }> {
   // SVG or GIF: keep original
@@ -62,7 +62,8 @@ async function fileToCompressedBase64(
 
 export async function uploadImageFile(
   file: File,
-  altText?: string
+  altText?: string,
+  folder?: string
 ): Promise<{ id: number; url: string; filename: string }> {
   if (!file.type.startsWith('image/')) {
     throw new Error('Please choose a valid image file (JPG, PNG, WebP, or SVG).');
@@ -75,6 +76,7 @@ export async function uploadImageFile(
       mimeType,
       dataBase64,
       altText: altText || file.name,
+      folder: folder || 'general',
     }),
   });
 }

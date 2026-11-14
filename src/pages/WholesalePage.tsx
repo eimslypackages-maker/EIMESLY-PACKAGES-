@@ -2,6 +2,11 @@ import React, { useState } from 'react';
 import { Building2, CheckCircle2, Layers, MessageCircle, Package } from 'lucide-react';
 import { useApp, useDocumentMeta } from '../context/AppContext';
 import { apiFetch } from '../lib/api';
+import {
+  buildWhatsAppUrl,
+  buildWholesaleQuoteMessage,
+  trackWhatsAppClick,
+} from '../lib/whatsapp';
 
 export function WholesalePage() {
   const { navigate, bootstrap } = useApp();
@@ -23,7 +28,16 @@ export function WholesalePage() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
 
-  const cleanWhatsapp = (settings?.whatsappNumber || '').replace(/[^0-9]/g, '');
+  const wholesaleWhatsappUrl = buildWhatsAppUrl(
+    settings,
+    buildWholesaleQuoteMessage({
+      productName: 'Bulk Packaging Supply',
+      requiredQuantity: 'Commercial Bulk Volume',
+      businessName: businessName || undefined,
+      location: settings?.address || 'Kigali, Rwanda',
+      template: settings?.whatsappWholesaleMessage,
+    })
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,24 +84,30 @@ export function WholesalePage() {
               Eimesly Packages partners with cafés, restaurants, hotels, supermarkets, and catering organizations across Kigali and Rwanda to provide dependable bulk food-service packaging.
             </p>
             <div className="flex flex-wrap gap-3.5 pt-2">
+              {wholesaleWhatsappUrl ? (
+                <a
+                  href={wholesaleWhatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() =>
+                    trackWhatsAppClick({
+                      eventType: 'wholesale_quote',
+                      sourcePage: 'wholesale_hero',
+                    })
+                  }
+                  className="px-6 py-3 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md inline-flex items-center gap-2 hover:bg-[#333333]"
+                >
+                  <MessageCircle className="w-4 h-4 text-[#B58B61]" />
+                  REQUEST WHOLESALE QUOTE ON WHATSAPP
+                </a>
+              ) : null}
               <button
                 type="button"
                 onClick={() => navigate('/request-quote')}
-                className="px-6 py-3 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333]"
+                className="px-6 py-3 text-sm font-semibold border border-[#202020]/25 bg-[#FFFFFF] text-[#202020] rounded-md hover:bg-[#F5F5F5]"
               >
-                Request Bulk Quotation
+                Submit Detailed RFQ Form
               </button>
-              {cleanWhatsapp && (
-                <a
-                  href={`https://wa.me/${cleanWhatsapp}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-6 py-3 text-sm font-semibold border border-[#202020]/25 bg-[#FFFFFF] text-[#202020] rounded-md inline-flex items-center gap-2 hover:bg-[#F5F5F5]"
-                >
-                  <MessageCircle className="w-4 h-4 text-[#B58B61]" />
-                  WhatsApp Sales Team
-                </a>
-              )}
             </div>
           </div>
         </div>
@@ -99,10 +119,10 @@ export function WholesalePage() {
           <div className="p-6 bg-[#F5F5F5] rounded-lg space-y-2.5">
             <Package className="w-6 h-6 text-[#B58B61]" />
             <h2 className="text-base font-semibold text-[#202020]">
-              Tiered Wholesale Pricing & MOQ
+              Tailored Bulk Quotations
             </h2>
             <p className="text-sm text-[#202020]/75 leading-relaxed">
-              Products configured with Minimum Order Quantities offer lower per-unit wholesale rates for businesses ordering by the carton or bulk pack.
+              Wholesale pricing is prepared per enquiry based on carton volume, product mix, and delivery schedule. Request a tailored quotation directly on WhatsApp.
             </p>
           </div>
           <div className="p-6 bg-[#F5F5F5] rounded-lg space-y-2.5">
@@ -111,7 +131,7 @@ export function WholesalePage() {
               Custom & Branded Packaging Enquiries
             </h2>
             <p className="text-sm text-[#202020]/75 leading-relaxed">
-              Need branded coffee cups, printed kraft bags, or specific container capacities? Submit custom packaging enquiries directly without creating an account.
+              Need branded coffee cups, printed kraft bags, or specific container capacities? Send us a message on WhatsApp or upload reference artwork in the RFQ form.
             </p>
           </div>
           <div className="p-6 bg-[#F5F5F5] rounded-lg space-y-2.5">
@@ -155,7 +175,7 @@ export function WholesalePage() {
             Bulk-Order & Custom Packaging Enquiry
           </h2>
           <p className="text-sm text-[#202020]/70 mt-1">
-            Submit wholesale enquiries directly without creating an account.
+            Prefer email or written follow-up? Submit your wholesale enquiry below and our Kigali desk will respond promptly.
           </p>
         </div>
 

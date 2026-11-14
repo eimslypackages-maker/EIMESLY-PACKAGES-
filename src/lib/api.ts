@@ -2,17 +2,24 @@ import { auth } from './firebase';
 
 let localSessionToken: string | null = null;
 
-export function setLocalSessionToken(token: string | null) {
+export function setLocalSessionToken(token: string | null, remember = true) {
   localSessionToken = token;
   if (token) {
     try {
-      sessionStorage.setItem('eimesly_session_token', token);
+      if (remember) {
+        localStorage.setItem('eimesly_session_token', token);
+        sessionStorage.removeItem('eimesly_session_token');
+      } else {
+        sessionStorage.setItem('eimesly_session_token', token);
+        localStorage.removeItem('eimesly_session_token');
+      }
     } catch {
       // ignore storage failure
     }
   } else {
     try {
       sessionStorage.removeItem('eimesly_session_token');
+      localStorage.removeItem('eimesly_session_token');
     } catch {
       // ignore
     }
@@ -22,7 +29,9 @@ export function setLocalSessionToken(token: string | null) {
 export function getLocalSessionToken(): string | null {
   if (localSessionToken) return localSessionToken;
   try {
-    localSessionToken = sessionStorage.getItem('eimesly_session_token');
+    localSessionToken =
+      sessionStorage.getItem('eimesly_session_token') ||
+      localStorage.getItem('eimesly_session_token');
   } catch {
     localSessionToken = null;
   }

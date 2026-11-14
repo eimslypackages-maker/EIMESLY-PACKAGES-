@@ -1,5 +1,6 @@
 export type UserRole =
   | 'super_admin'
+  | 'business_owner'
   | 'business_manager'
   | 'sales_staff'
   | 'inventory_manager'
@@ -52,6 +53,7 @@ export interface Product {
   packagingQuantity: string;
   unitPrice: number | null;
   wholesalePrice: number | null;
+  costPrice?: number | null;
   moq: number;
   stockQuantity: number;
   lowStockThreshold: number;
@@ -118,6 +120,27 @@ export interface Order {
   updatedAt: string;
 }
 
+export type PaymentMethodType = 'mobile_money' | 'bank_transfer' | 'cash' | 'other';
+export type PaymentVerificationStatus = 'pending' | 'verified' | 'rejected';
+
+export interface PaymentRecord {
+  id: number;
+  orderId: number;
+  orderNumber: string;
+  customerName?: string;
+  orderTotal?: number;
+  amount: number;
+  method: PaymentMethodType;
+  reference: string;
+  proofImageUrl: string;
+  status: PaymentVerificationStatus;
+  notes: string;
+  recordedBy: number | null;
+  verifiedBy: number | null;
+  verifiedAt: string | null;
+  createdAt: string;
+}
+
 export type QuotationStatus =
   | 'new'
   | 'under_review'
@@ -125,6 +148,15 @@ export type QuotationStatus =
   | 'accepted'
   | 'rejected'
   | 'completed';
+
+export interface QuotationLineItem {
+  productName: string;
+  sku: string;
+  size: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
 
 export interface Quotation {
   id: number;
@@ -141,6 +173,8 @@ export interface Quotation {
   additionalRequirements: string;
   referenceImageUrl: string;
   status: QuotationStatus;
+  items?: QuotationLineItem[];
+  discountAmount?: number;
   proposedUnitPrice: number | null;
   proposedQuantity: number | null;
   proposedTotal: number | null;
@@ -200,6 +234,11 @@ export interface WebsiteSettings {
   faviconUrl: string;
   phone: string;
   whatsappNumber: string;
+  whatsappCountryCode: string;
+  whatsappDefaultOrderMessage: string;
+  whatsappWholesaleMessage: string;
+  whatsappGeneralMessage: string;
+  showWholesalePricesPublicly: boolean;
   email: string;
   address: string;
   city: string;
@@ -210,14 +249,13 @@ export interface WebsiteSettings {
   currency: string;
   instagramUrl: string;
   facebookUrl: string;
-  deliveryFee: number;
-  freeDeliveryThreshold: number;
   deliveryNotes: string;
-  enableMobileMoney: boolean;
-  mobileMoneyInstructions: string;
-  enableBankTransfer: boolean;
-  bankTransferInstructions: string;
-  enableCashOnDelivery: boolean;
+  collectionPointEnabled?: boolean;
+  collectionAddress?: string;
+  collectionHours?: string;
+  orderNumberPrefix?: string;
+  notificationEmail?: string;
+  notifyOnNewQuotation?: boolean;
   maintenanceMode: boolean;
   googleAnalyticsId: string;
   facebookPixelId: string;
@@ -243,16 +281,7 @@ export interface WebsiteContent {
   seoKeywords: string;
 }
 
-export interface CartItem {
-  productId: number;
-  slug: string;
-  name: string;
-  sku: string;
-  image: string;
-  selectedSize: string;
-  quantity: number;
-  unitPrice: number | null;
-  wholesalePrice: number | null;
-  moq: number;
-  packagingQuantity: string;
-}
+export type WhatsAppClickEventType =
+  | 'product_order'
+  | 'wholesale_quote'
+  | 'whatsapp_contact';

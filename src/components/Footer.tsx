@@ -1,5 +1,10 @@
 import { MapPin, Mail, Phone, MessageCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import {
+  buildGeneralEnquiryMessage,
+  buildWhatsAppUrl,
+  trackWhatsAppClick,
+} from '../lib/whatsapp';
 
 export function Footer() {
   const { navigate, bootstrap } = useApp();
@@ -7,7 +12,10 @@ export function Footer() {
   const content = bootstrap?.content;
   const categories = bootstrap?.categories || [];
 
-  const cleanWhatsapp = (settings?.whatsappNumber || '').replace(/[^0-9]/g, '');
+  const whatsappUrl = buildWhatsAppUrl(
+    settings,
+    buildGeneralEnquiryMessage(settings)
+  );
 
   return (
     <footer className="bg-[#202020] text-[#FFFFFF] border-t border-[#202020] no-print">
@@ -59,20 +67,20 @@ export function Footer() {
             </ul>
           </div>
 
-          {/* Column 3: Quick Navigation */}
+          {/* Column 3: EIMESLY PACKAGES Navigation */}
           <div>
             <h3 className="text-sm font-semibold text-[#FFFFFF] mb-4">
-              Quick Navigation
+              EIMESLY PACKAGES
             </h3>
             <ul className="space-y-2.5">
               {[
-                { label: 'Shop All Products', to: '/shop' },
-                { label: 'Wholesale Solutions', to: '/wholesale' },
-                { label: 'Request a Quote', to: '/request-quote' },
-                { label: 'About Eimesly Packages', to: '/about' },
-                { label: 'Frequently Asked Questions', to: '/faq' },
+                { label: 'Home', to: '/' },
+                { label: 'Shop', to: '/shop' },
+                { label: 'About Us', to: '/about' },
+                { label: 'Wholesale', to: '/wholesale' },
                 { label: 'Contact Us', to: '/contact' },
-                { label: 'Customer Account', to: '/account' },
+                { label: 'Request a Quote', to: '/request-quote' },
+                { label: 'FAQ', to: '/faq' },
               ].map((item) => (
                 <li key={item.to}>
                   <a
@@ -90,7 +98,7 @@ export function Footer() {
             </ul>
           </div>
 
-          {/* Column 4: Contact & Social */}
+          {/* Column 4: Contact & WhatsApp */}
           <div className="space-y-4">
             <h3 className="text-sm font-semibold text-[#FFFFFF] mb-4">
               Contact & Location
@@ -98,9 +106,7 @@ export function Footer() {
             <div className="space-y-3 text-sm text-[#FFFFFF]/75">
               <div className="flex items-start gap-2.5">
                 <MapPin className="w-4 h-4 text-[#B58B61] shrink-0 mt-0.5" />
-                <span>
-                  {settings?.address || 'Kigali, Rwanda'}
-                </span>
+                <span>{settings?.address || 'Kigali, Rwanda'}</span>
               </div>
               {settings?.phone ? (
                 <div className="flex items-center gap-2.5">
@@ -124,16 +130,22 @@ export function Footer() {
                   </a>
                 </div>
               ) : null}
-              {cleanWhatsapp ? (
+              {whatsappUrl ? (
                 <div className="flex items-center gap-2.5">
                   <MessageCircle className="w-4 h-4 text-[#B58B61] shrink-0" />
                   <a
-                    href={`https://wa.me/${cleanWhatsapp}`}
+                    href={whatsappUrl}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={() =>
+                      trackWhatsAppClick({
+                        eventType: 'whatsapp_contact',
+                        sourcePage: 'footer',
+                      })
+                    }
                     className="hover:text-[#FFFFFF]"
                   >
-                    WhatsApp Business
+                    Order via WhatsApp Business
                   </a>
                 </div>
               ) : null}
@@ -170,7 +182,7 @@ export function Footer() {
           <p>
             © {new Date().getFullYear()} {settings?.companyName || 'Eimesly Packages'} ({settings?.parentCompany || 'EIMESLY LTD'}). Kigali, Rwanda.
           </p>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-5 sm:gap-6">
             <a
               href="/privacy-policy"
               onClick={(e) => {
@@ -190,6 +202,16 @@ export function Footer() {
               className="hover:text-[#FFFFFF] transition-colors"
             >
               Terms & Conditions
+            </a>
+            <a
+              href="/admin/login"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate('/admin/login');
+              }}
+              className="text-[#FFFFFF]/55 hover:text-[#B58B61] transition-colors"
+            >
+              Admin Control
             </a>
           </div>
         </div>

@@ -14,7 +14,6 @@ import {
   setLocalSessionToken,
 } from '../lib/api';
 import type {
-  CartItem,
   Category,
   Product,
   UserProfile,
@@ -35,44 +34,19 @@ interface AppContextValue {
   user: UserProfile | null;
   authReady: boolean;
   signInWithGoogle: () => Promise<UserProfile | null>;
-  loginWithEmail: (email: string, password: string) => Promise<UserProfile>;
-  registerWithEmail: (data: {
-    email: string;
-    password: string;
-    fullName: string;
-    phone: string;
-    businessName?: string;
-  }) => Promise<UserProfile>;
+  loginWithEmail: (
+    email: string,
+    password: string,
+    remember?: boolean
+  ) => Promise<UserProfile>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<UserProfile | null>;
   bootstrap: BootstrapData | null;
   bootstrapLoading: boolean;
   refreshBootstrap: () => Promise<void>;
-  cart: CartItem[];
-  addToCart: (item: CartItem, openDrawer?: boolean) => void;
-  updateCartQty: (productId: number, selectedSize: string, quantity: number) => void;
-  removeFromCart: (productId: number, selectedSize: string) => void;
-  clearCart: () => void;
-  cartCount: number;
-  cartSubtotal: number;
-  isCartOpen: boolean;
-  setCartOpen: (open: boolean) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
-
-const CART_STORAGE_KEY = 'eimesly_cart_v1';
-
-function loadCartFromStorage(): CartItem[] {
-  try {
-    const raw = localStorage.getItem(CART_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
 
 export function useDocumentMeta(title: string, description?: string) {
   useEffect(() => {
@@ -103,8 +77,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [authReady, setAuthReady] = useState(false);
   const [bootstrap, setBootstrap] = useState<BootstrapData | null>(null);
   const [bootstrapLoading, setBootstrapLoading] = useState(true);
-  const [cart, setCart] = useState<CartItem[]>(loadCartFromStorage);
-  const [isCartOpen, setCartOpen] = useState(false);
 
   const navigate = useCallback((to: string) => {
     const target = to.startsWith('/') ? to : `/${to}`;
@@ -213,11 +185,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = useCallback(async (): Promise<UserProfile | null> => {
     setLocalSessionToken(null);
     await signInWithPopup(auth, googleAuthProvider);
-    return refreshUser();
-  }, [refreshUser]);
+    const data = await apiFetch<{ user: UserProfile }>('/api/auth/me');
+    setUser(data.user);
+    return data.user;
+  }, []);
 
   const loginWithEmail = useCallback(
-    async (email: string, password: string): Promise<UserProfile> => {
+    async (
+      email: string,
+      password: string,
+      remember = true
+    ): Promise<UserProfile> => {
       const res = await apiFetch<{ token: string; user: UserProfile }>(
         '/api/auth/login',
         {
@@ -225,29 +203,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           body: JSON.stringify({ email, password }),
         }
       );
-      setLocalSessionToken(res.token);
-      setUser(res.user);
-      return res.user;
-    },
-    []
-  );
-
-  const registerWithEmail = useCallback(
-    async (payload: {
-      email: string;
-      password: string;
-      fullName: string;
-      phone: string;
-      businessName?: string;
-    }): Promise<UserProfile> => {
-      const res = await apiFetch<{ token: string; user: UserProfile }>(
-        '/api/auth/register',
-        {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        }
-      );
-      setLocalSessionToken(res.token);
+      setLocalSessionToken(res.token, remember);
       setUser(res.user);
       return res.user;
     },
@@ -264,80 +220,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
-    } catch {
-      // ignore
-    }
-  }, [cart]);
-
-  const addToCart = useCallback((item: CartItem, openDrawer = true) => {
-    setCart((prev) => {
-      const idx = prev.findIndex(
-        (c) =>
-          c.productId === item.productId &&
-          c.selectedSize === item.selectedSize
-      );
-      if (idx >= 0) {
-        const updated = [...prev];
-        updated[idx] = {
-          ...updated[idx],
-          quantity: updated[idx].quantity + item.quantity,
-        };
-        return updated;
-      }
-      return [...prev, item];
-    });
-    if (openDrawer) setCartOpen(true);
-  }, []);
-
-  const updateCartQty = useCallback(
-    (productId: number, selectedSize: string, quantity: number) => {
-      if (quantity <= 0) {
-        setCart((prev) =>
-          prev.filter(
-            (c) =>
-              !(c.productId === productId && c.selectedSize === selectedSize)
-          )
-        );
-        return;
-      }
-      setCart((prev) =>
-        prev.map((c) =>
-          c.productId === productId && c.selectedSize === selectedSize
-            ? { ...c, quantity }
-            : c
-        )
-      );
-    },
-    []
-  );
-
-  const removeFromCart = useCallback(
-    (productId: number, selectedSize: string) => {
-      setCart((prev) =>
-        prev.filter(
-          (c) => !(c.productId === productId && c.selectedSize === selectedSize)
-        )
-      );
-    },
-    []
-  );
-
-  const clearCart = useCallback(() => {
-    setCart([]);
-  }, []);
-
-  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const cartSubtotal = cart.reduce((sum, item) => {
-    const unit =
-      item.wholesalePrice && item.quantity >= item.moq && item.moq > 1
-        ? item.wholesalePrice
-        : item.unitPrice ?? 0;
-    return sum + unit * item.quantity;
-  }, 0);
-
   return (
     <AppContext.Provider
       value={{
@@ -347,21 +229,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         authReady,
         signInWithGoogle,
         loginWithEmail,
-        registerWithEmail,
         logout,
         refreshUser,
         bootstrap,
         bootstrapLoading,
         refreshBootstrap,
-        cart,
-        addToCart,
-        updateCartQty,
-        removeFromCart,
-        clearCart,
-        cartCount,
-        cartSubtotal,
-        isCartOpen,
-        setCartOpen,
       }}
     >
       {children}

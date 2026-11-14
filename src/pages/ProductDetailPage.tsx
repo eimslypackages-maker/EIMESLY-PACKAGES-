@@ -1,15 +1,26 @@
 import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
+  Building2,
+  Check,
+  Copy,
   MessageCircle,
   Minus,
   Plus,
-  ZoomIn,
   X,
+  ZoomIn,
 } from 'lucide-react';
 import { useApp, useDocumentMeta } from '../context/AppContext';
 import { apiFetch } from '../lib/api';
 import { AVAILABILITY_LABELS, formatRwf } from '../lib/format';
+import {
+  buildProductOrderMessage,
+  buildWhatsAppUrl,
+  buildWholesaleQuoteMessage,
+  derivePackagingUnits,
+  formatQuantityWithUnit,
+  trackWhatsAppClick,
+} from '../lib/whatsapp';
 import { ProductCard } from '../components/ProductCard';
 import { SmartImage } from '../components/SmartImage';
 import type { Product } from '../shared/types';
@@ -20,14 +31,29 @@ interface ProductDetailResponse {
 }
 
 export function ProductDetailPage({ slug }: { slug: string }) {
-  const { navigate, addToCart, bootstrap } = useApp();
+  const { navigate, bootstrap } = useApp();
   const [data, setData] = useState<ProductDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeImageIdx, setActiveImageIdx] = useState(0);
   const [zoomOpen, setZoomOpen] = useState(false);
+
   const [selectedSize, setSelectedSize] = useState('');
+  const [selectedVariation, setSelectedVariation] = useState('');
+  const [packagingUnit, setPackagingUnit] = useState('Pack');
   const [quantity, setQuantity] = useState(1);
+  const [moqError, setMoqError] = useState('');
+
+  // Optional bulk enquiry context for Wholesale Quote button
+  const [bulkBusinessName, setBulkBusinessName] = useState('');
+  const [bulkLocation, setBulkLocation] = useState('Kigali, Rwanda');
+
+  // Fallback modal when WhatsApp number is not yet configured in settings
+  const [fallbackModal, setFallbackModal] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const settings = bootstrap?.settings;
 
@@ -35,12 +61,16 @@ export function ProductDetailPage({ slug }: { slug: string }) {
     let cancelled = false;
     setLoading(true);
     setError('');
+    setMoqError('');
     setActiveImageIdx(0);
     apiFetch<ProductDetailResponse>(`/api/products/${encodeURIComponent(slug)}`)
       .then((res) => {
         if (!cancelled) {
           setData(res);
+          const units = derivePackagingUnits(res.product);
           setSelectedSize(res.product.sizes?.[0] || '');
+          setSelectedVariation(res.product.colors?.[0] || '');
+          setPackagingUnit(units[0] || 'Pack');
           setQuantity(Math.max(1, res.product.moq || 1));
         }
       })
@@ -95,40 +125,117 @@ export function ProductDetailPage({ slug }: { slug: string }) {
 
   const images = product.images?.length ? product.images : [''];
   const activeImage = images[activeImageIdx] || images[0];
-  const wholesaleApplies =
-    product.wholesalePrice !== null &&
-    product.moq > 1 &&
-    quantity >= product.moq;
-  const effectiveUnitPrice = wholesaleApplies
-    ? product.wholesalePrice
-    : product.unitPrice;
+  const packagingUnits = derivePackagingUnits(product);
+  const minQty = Math.max(1, product.moq || 1);
 
-  const handleAddToCart = (goToCheckout = false) => {
-    addToCart(
-      {
-        productId: product.id,
-        slug: product.slug,
-        name: product.name,
-        sku: product.sku,
-        image: images[0] || '',
-        selectedSize,
-        quantity,
-        unitPrice: product.unitPrice,
-        wholesalePrice: product.wholesalePrice,
-        moq: product.moq || 1,
-        packagingQuantity: product.packagingQuantity,
-      },
-      !goToCheckout
-    );
-    if (goToCheckout) {
-      navigate('/checkout');
+  const showWholesalePublic =
+    Boolean(settings?.showWholesalePricesPublicly) &&
+    product.wholesalePrice !== null;
+
+  const isQuantityValid = quantity >= minQty;
+  const effectiveQty = Math.max(minQty, quantity);
+  const illustrativeTotal =
+    product.unitPrice !== null ? product.unitPrice * effectiveQty : null;
+
+  const orderMessage = buildProductOrderMessage({
+    product,
+    selectedSize,
+    selectedVariation,
+    quantity: effectiveQty,
+    packagingUnit,
+    currency: settings?.currency || 'RWF',
+    template: settings?.whatsappDefaultOrderMessage,
+  });
+
+  const wholesaleMessage = buildWholesaleQuoteMessage({
+    productName: product.name,
+    requiredQuantity: formatQuantityWithUnit(effectiveQty, packagingUnit),
+    businessName: bulkBusinessName,
+    location: bulkLocation,
+    selectedSize,
+    template: settings?.whatsappWholesaleMessage,
+  });
+
+  const orderWaUrl = buildWhatsAppUrl(settings, orderMessage);
+  const wholesaleWaUrl = buildWhatsAppUrl(settings, wholesaleMessage);
+
+  const handleQuantityChange = (nextRaw: number) => {
+    const val = Number.isNaN(nextRaw) ? minQty : Math.max(1, Math.floor(nextRaw));
+    setQuantity(val);
+    if (val < minQty) {
+      setMoqError(
+        `Minimum order quantity for this product is ${minQty} ${packagingUnit}${minQty > 1 ? 's' : ''}.`
+      );
+    } else {
+      setMoqError('');
     }
   };
 
-  const cleanWhatsapp = (settings?.whatsappNumber || '').replace(/[^0-9]/g, '');
-  const whatsappMessage = encodeURIComponent(
-    `Hello Eimesly Packages, I would like to enquire about ${product.name} (SKU: ${product.sku})${selectedSize ? `, Size: ${selectedSize}` : ''}, Quantity: ${quantity}.`
-  );
+  const handleOrderClick = (e: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>) => {
+    if (!isQuantityValid) {
+      e.preventDefault();
+      setQuantity(minQty);
+      setMoqError(
+        `Quantity adjusted to the minimum order quantity (${minQty} ${packagingUnit}${minQty > 1 ? 's' : ''}).`
+      );
+      return;
+    }
+
+    trackWhatsAppClick({
+      eventType: 'product_order',
+      productId: product.id,
+      productName: product.name,
+      sku: product.sku,
+      selectedSize,
+      quantity: effectiveQty,
+      sourcePage: 'product_detail',
+    });
+
+    if (!orderWaUrl) {
+      e.preventDefault();
+      setFallbackModal({
+        title: 'WhatsApp Order Message Ready',
+        message: orderMessage,
+      });
+    }
+  };
+
+  const handleWholesaleClick = (
+    e: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>
+  ) => {
+    trackWhatsAppClick({
+      eventType: 'wholesale_quote',
+      productId: product.id,
+      productName: product.name,
+      sku: product.sku,
+      selectedSize,
+      quantity: effectiveQty,
+      sourcePage: 'product_detail',
+    });
+
+    if (!wholesaleWaUrl) {
+      e.preventDefault();
+      setFallbackModal({
+        title: 'Wholesale Quote Message Ready',
+        message: wholesaleMessage,
+      });
+    }
+  };
+
+  const handleCopyFallback = () => {
+    if (fallbackModal && navigator.clipboard) {
+      navigator.clipboard.writeText(fallbackModal.message).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
+  };
+
+  const specSummaryParts = [
+    selectedSize || product.sizes?.[0],
+    product.packagingQuantity,
+    product.material,
+  ].filter(Boolean);
 
   return (
     <div className="bg-[#FFFFFF]">
@@ -209,7 +316,7 @@ export function ProductDetailPage({ slug }: { slug: string }) {
             )}
           </div>
 
-          {/* Right: Contiguous Purchase & Specification Module */}
+          {/* Right: Specification & WhatsApp Direct Ordering Module */}
           <div className="lg:col-span-6 space-y-6">
             <div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-[#202020]/65">
@@ -236,13 +343,19 @@ export function ProductDetailPage({ slug }: { slug: string }) {
                 {product.name}
               </h1>
 
+              {specSummaryParts.length > 0 && (
+                <p className="mt-1.5 text-sm text-[#202020]/65">
+                  {specSummaryParts.join(' · ')}
+                </p>
+              )}
+
               <div className="mt-4 flex flex-wrap items-baseline gap-4">
                 <span className="text-2xl font-bold text-[#202020] tabular-nums">
-                  {effectiveUnitPrice !== null
-                    ? formatRwf(effectiveUnitPrice)
+                  {product.unitPrice !== null
+                    ? formatRwf(product.unitPrice)
                     : 'Price on Request'}
                 </span>
-                {product.wholesalePrice !== null && (
+                {showWholesalePublic && product.wholesalePrice !== null && (
                   <span className="text-sm text-[#B58B61] font-medium tabular-nums">
                     Wholesale: {formatRwf(product.wholesalePrice)} (MOQ {product.moq})
                   </span>
@@ -274,31 +387,30 @@ export function ProductDetailPage({ slug }: { slug: string }) {
                   </span>
                 </div>
               )}
-              {product.colors && product.colors.length > 0 && (
-                <div>
-                  <span className="text-xs text-[#202020]/55 block">
-                    Available Colors
-                  </span>
-                  <span className="font-medium text-[#202020]">
-                    {product.colors.join(', ')}
-                  </span>
-                </div>
-              )}
               <div>
                 <span className="text-xs text-[#202020]/55 block">
                   Minimum Order Quantity (MOQ)
                 </span>
                 <span className="font-medium text-[#202020] tabular-nums">
-                  {product.moq} {product.moq === 1 ? 'unit / pack' : 'units / packs'}
+                  {minQty} {minQty === 1 ? packagingUnit : `${packagingUnit}s`}
+                </span>
+              </div>
+              <div>
+                <span className="text-xs text-[#202020]/55 block">
+                  Availability
+                </span>
+                <span className="font-medium text-[#202020]">
+                  {AVAILABILITY_LABELS[product.availabilityStatus] ||
+                    product.availabilityStatus}
                 </span>
               </div>
             </div>
 
-            {/* Size Selector */}
+            {/* Product Size Selector */}
             {product.sizes && product.sizes.length > 0 && (
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-[#202020]/70 mb-2">
-                  Select Size / Variant
+                  Product Size
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {product.sizes.map((s) => (
@@ -319,13 +431,41 @@ export function ProductDetailPage({ slug }: { slug: string }) {
               </div>
             )}
 
-            {/* Quantity + Primary Purchase Actions */}
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="inline-flex items-center border border-[#202020]/20 rounded-md">
+            {/* Product Variation / Color Selector */}
+            {product.colors && product.colors.length > 0 && (
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#202020]/70 mb-2">
+                  Product Variation
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {product.colors.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setSelectedVariation(c)}
+                      className={`px-3.5 py-2 text-sm rounded-md border transition-colors ${
+                        selectedVariation === c
+                          ? 'border-[#B58B61] bg-[#F3EEE6] text-[#202020] font-semibold'
+                          : 'border-[#202020]/20 text-[#202020] hover:border-[#202020]'
+                      }`}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Quantity & Packaging Unit */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#202020]/70 mb-2">
+                  Quantity (Min {minQty})
+                </label>
+                <div className="inline-flex items-center border border-[#202020]/20 rounded-md w-full justify-between">
                   <button
                     type="button"
-                    onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                    onClick={() => handleQuantityChange(quantity - 1)}
                     aria-label="Decrease quantity"
                     className="p-3 hover:bg-[#F5F5F5]"
                   >
@@ -333,41 +473,133 @@ export function ProductDetailPage({ slug }: { slug: string }) {
                   </button>
                   <input
                     type="number"
-                    min={1}
+                    min={minQty}
                     value={quantity}
-                    onChange={(e) =>
-                      setQuantity(Math.max(1, Number(e.target.value || 1)))
-                    }
-                    className="w-16 text-center text-sm font-semibold tabular-nums focus:outline-none"
+                    onChange={(e) => handleQuantityChange(Number(e.target.value))}
+                    className="w-20 text-center text-sm font-semibold tabular-nums focus:outline-none"
                   />
                   <button
                     type="button"
-                    onClick={() => setQuantity((q) => q + 1)}
+                    onClick={() => handleQuantityChange(quantity + 1)}
                     aria-label="Increase quantity"
                     className="p-3 hover:bg-[#F5F5F5]"
                   >
                     <Plus className="w-4 h-4" />
                   </button>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleAddToCart(false)}
-                  className="flex-1 min-w-[160px] py-3 px-6 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors"
-                >
-                  Add to Cart
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleAddToCart(true)}
-                  className="py-3 px-6 text-sm font-semibold bg-[#B58B61] text-[#FFFFFF] rounded-md hover:bg-[#9f764e] transition-colors"
-                >
-                  Buy Now
-                </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#202020]/70 mb-2">
+                  Packaging Unit
+                </label>
+                <select
+                  value={packagingUnit}
+                  onChange={(e) => setPackagingUnit(e.target.value)}
+                  className="w-full px-3.5 py-3 text-sm bg-[#FFFFFF] border border-[#202020]/20 rounded-md focus:outline-none focus:border-[#B58B61]"
+                >
+                  {packagingUnits.map((unit) => (
+                    <option key={unit} value={unit}>
+                      {unit}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {moqError && (
+              <p className="text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                {moqError}
+              </p>
+            )}
+
+            {/* Order Summary & Primary WhatsApp CTA */}
+            <div className="bg-[#F3EEE6]/70 border border-[#202020]/10 rounded-lg p-4 space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-[#202020]/75">
+                  Selected: <strong className="text-[#202020]">{formatQuantityWithUnit(effectiveQty, packagingUnit)}</strong>
+                  {selectedSize ? ` · ${selectedSize}` : ''}
+                </span>
+                <span className="font-bold text-[#202020] tabular-nums">
+                  {illustrativeTotal !== null
+                    ? formatRwf(illustrativeTotal)
+                    : 'Price on Request'}
+                </span>
+              </div>
+
+              {orderWaUrl ? (
+                <a
+                  href={orderWaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={handleOrderClick}
+                  className="w-full py-3.5 px-6 text-sm font-semibold uppercase tracking-wide bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors inline-flex items-center justify-center gap-2"
+                >
+                  <MessageCircle className="w-4 h-4 text-[#B58B61]" />
+                  ORDER NOW ON WHATSAPP
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleOrderClick}
+                  className="w-full py-3.5 px-6 text-sm font-semibold uppercase tracking-wide bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors inline-flex items-center justify-center gap-2"
+                >
+                  <MessageCircle className="w-4 h-4 text-[#B58B61]" />
+                  ORDER NOW ON WHATSAPP
+                </button>
+              )}
+
+              <p className="text-[11px] text-[#202020]/65 text-center">
+                No account or online payment required. Complete your order directly with our Kigali sales team on WhatsApp.
+              </p>
+            </div>
+
+            {/* Separate Wholesale Quote Section */}
+            <div className="border border-[#202020]/15 rounded-lg p-4 space-y-3 bg-[#FFFFFF]">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-[#B58B61]" />
+                <h2 className="text-sm font-bold text-[#202020]">
+                  Bulk & Commercial Purchasing
+                </h2>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  value={bulkBusinessName}
+                  onChange={(e) => setBulkBusinessName(e.target.value)}
+                  placeholder="Business Name (optional)"
+                  className="px-3 py-2 text-xs border border-[#202020]/20 rounded-md focus:outline-none focus:border-[#B58B61]"
+                />
+                <input
+                  type="text"
+                  value={bulkLocation}
+                  onChange={(e) => setBulkLocation(e.target.value)}
+                  placeholder="Location (e.g. Kigali, Rwanda)"
+                  className="px-3 py-2 text-xs border border-[#202020]/20 rounded-md focus:outline-none focus:border-[#B58B61]"
+                />
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                {wholesaleWaUrl ? (
+                  <a
+                    href={wholesaleWaUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={handleWholesaleClick}
+                    className="flex-1 py-2.5 px-4 text-xs font-semibold uppercase tracking-wide bg-[#B58B61] text-[#FFFFFF] rounded-md hover:bg-[#9f764e] transition-colors inline-flex items-center justify-center gap-2"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    REQUEST WHOLESALE QUOTE
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleWholesaleClick}
+                    className="flex-1 py-2.5 px-4 text-xs font-semibold uppercase tracking-wide bg-[#B58B61] text-[#FFFFFF] rounded-md hover:bg-[#9f764e] transition-colors inline-flex items-center justify-center gap-2"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    REQUEST WHOLESALE QUOTE
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() =>
@@ -379,31 +611,10 @@ export function ProductDetailPage({ slug }: { slug: string }) {
                       )}`
                     )
                   }
-                  className="py-2.5 px-4 text-sm font-medium border border-[#202020]/25 text-[#202020] rounded-md hover:bg-[#F3EEE6] transition-colors"
+                  className="py-2.5 px-4 text-xs font-medium border border-[#202020]/20 text-[#202020] rounded-md hover:bg-[#F5F5F5] transition-colors"
                 >
-                  Request a Bulk Quote
+                  Formal RFQ Form
                 </button>
-
-                {cleanWhatsapp ? (
-                  <a
-                    href={`https://wa.me/${cleanWhatsapp}?text=${whatsappMessage}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="py-2.5 px-4 text-sm font-medium border border-[#202020]/25 text-[#202020] rounded-md hover:bg-[#F5F5F5] transition-colors inline-flex items-center justify-center gap-2"
-                  >
-                    <MessageCircle className="w-4 h-4 text-[#B58B61]" />
-                    WhatsApp Enquiry
-                  </a>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => navigate('/contact')}
-                    className="py-2.5 px-4 text-sm font-medium border border-[#202020]/25 text-[#202020] rounded-md hover:bg-[#F5F5F5] transition-colors inline-flex items-center justify-center gap-2"
-                  >
-                    <MessageCircle className="w-4 h-4 text-[#B58B61]" />
-                    Enquire About Product
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -447,6 +658,58 @@ export function ProductDetailPage({ slug }: { slug: string }) {
               alt={product.name}
               className="w-full h-full max-h-[85vh] object-contain"
             />
+          </div>
+        </div>
+      )}
+
+      {/* Fallback Preview Modal when WhatsApp Business number is not configured */}
+      {fallbackModal && (
+        <div
+          className="fixed inset-0 z-50 bg-[#202020]/60 flex items-center justify-center p-4"
+          onClick={() => setFallbackModal(null)}
+        >
+          <div
+            className="bg-[#FFFFFF] rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-[#202020]/10">
+              <h3 className="text-base font-bold text-[#202020]">
+                {fallbackModal.title}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setFallbackModal(null)}
+                className="p-1 text-[#202020]/60"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-[#202020]/75">
+              Our WhatsApp Business number can be configured in Admin Settings. You can copy your generated message below or contact our team directly.
+            </p>
+            <pre className="p-3 bg-[#F5F5F5] border border-[#202020]/10 rounded-md text-xs text-[#202020] whitespace-pre-wrap font-sans">
+              {fallbackModal.message}
+            </pre>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCopyFallback}
+                className="px-4 py-2 text-xs font-semibold border border-[#202020]/20 rounded-md inline-flex items-center gap-1.5"
+              >
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-700" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? 'Copied' : 'Copy Message'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFallbackModal(null);
+                  navigate('/contact');
+                }}
+                className="px-4 py-2 text-xs font-semibold bg-[#202020] text-[#FFFFFF] rounded-md"
+              >
+                Contact Us
+              </button>
+            </div>
           </div>
         </div>
       )}

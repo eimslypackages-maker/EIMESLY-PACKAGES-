@@ -63,10 +63,24 @@ export const QUOTATION_STATUS_LABELS: Record<string, string> = {
 
 export const ROLE_LABELS: Record<string, string> = {
   super_admin: 'Super Admin',
+  business_owner: 'Business Owner',
   business_manager: 'Business Manager',
   sales_staff: 'Sales Staff',
   inventory_manager: 'Inventory Manager',
   customer: 'Customer',
+};
+
+export const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  mobile_money: 'Mobile Money',
+  bank_transfer: 'Bank Transfer',
+  cash: 'Cash',
+  other: 'Other',
+};
+
+export const PAYMENT_VERIFICATION_LABELS: Record<string, string> = {
+  pending: 'Pending Verification',
+  verified: 'Verified',
+  rejected: 'Rejected',
 };
 
 export function downloadCsv(filename: string, headers: string[], rows: unknown[][]) {

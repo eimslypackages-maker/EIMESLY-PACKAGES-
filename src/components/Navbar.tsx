@@ -1,14 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  Menu,
-  MessageCircle,
-  Search,
-  ShoppingBag,
-  User,
-  X,
-} from 'lucide-react';
+import { Menu, MessageCircle, Search, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { apiFetch } from '../lib/api';
+import {
+  buildGeneralEnquiryMessage,
+  buildWhatsAppUrl,
+  trackWhatsAppClick,
+} from '../lib/whatsapp';
 
 interface Suggestion {
   id: number;
@@ -18,7 +16,7 @@ interface Suggestion {
 }
 
 export function Navbar() {
-  const { path, navigate, user, bootstrap, cartCount, setCartOpen } = useApp();
+  const { path, navigate, bootstrap } = useApp();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -74,7 +72,10 @@ export function Navbar() {
     }
   };
 
-  const cleanWhatsapp = (settings?.whatsappNumber || '').replace(/[^0-9]/g, '');
+  const whatsappUrl = buildWhatsAppUrl(
+    settings,
+    buildGeneralEnquiryMessage(settings)
+  );
 
   return (
     <header className="sticky top-0 z-40 bg-[#FFFFFF]/95 backdrop-blur-sm border-b border-[#202020]/10 no-print">
@@ -140,8 +141,8 @@ export function Navbar() {
           })}
         </nav>
 
-        {/* Right Actions */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+        {/* Right Actions: Search + WhatsApp Us */}
+        <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => setSearchOpen(!searchOpen)}
@@ -151,54 +152,32 @@ export function Navbar() {
             <Search className="w-5 h-5" strokeWidth={1.75} />
           </button>
 
-          {cleanWhatsapp ? (
+          {whatsappUrl ? (
             <a
-              href={`https://wa.me/${cleanWhatsapp}`}
+              href={whatsappUrl}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="Contact via WhatsApp"
-              className="hidden sm:inline-flex p-2 text-[#202020]/80 hover:text-[#202020] hover:bg-[#F5F5F5] rounded-md transition-colors"
+              onClick={() =>
+                trackWhatsAppClick({
+                  eventType: 'whatsapp_contact',
+                  sourcePage: 'navbar',
+                })
+              }
+              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors whitespace-nowrap shrink-0"
             >
-              <MessageCircle className="w-5 h-5" strokeWidth={1.75} />
+              <MessageCircle className="w-4 h-4 text-[#B58B61]" strokeWidth={2} />
+              <span>WhatsApp Us</span>
             </a>
           ) : (
             <button
               type="button"
               onClick={() => navigate('/contact')}
-              aria-label="Contact team"
-              className="hidden sm:inline-flex p-2 text-[#202020]/80 hover:text-[#202020] hover:bg-[#F5F5F5] rounded-md transition-colors"
+              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors whitespace-nowrap shrink-0"
             >
-              <MessageCircle className="w-5 h-5" strokeWidth={1.75} />
+              <MessageCircle className="w-4 h-4 text-[#B58B61]" strokeWidth={2} />
+              <span>WhatsApp Us</span>
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={() => setCartOpen(true)}
-            aria-label="Open shopping cart"
-            className="relative p-2 text-[#202020]/80 hover:text-[#202020] hover:bg-[#F5F5F5] rounded-md transition-colors"
-          >
-            <ShoppingBag className="w-5 h-5" strokeWidth={1.75} />
-            {cartCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-[#202020] text-[#FFFFFF] text-[11px] font-semibold tabular-nums rounded-full flex items-center justify-center">
-                {cartCount}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => navigate(user ? '/account' : '/login')}
-            aria-label={user ? 'Customer account' : 'Sign in'}
-            className="p-2 text-[#202020]/80 hover:text-[#202020] hover:bg-[#F5F5F5] rounded-md transition-colors flex items-center gap-1.5"
-          >
-            <User className="w-5 h-5" strokeWidth={1.75} />
-            {user && (
-              <span className="hidden md:inline text-xs font-medium text-[#202020] max-w-[90px] truncate">
-                {user.fullName || 'Account'}
-              </span>
-            )}
-          </button>
         </div>
       </div>
 
@@ -278,25 +257,33 @@ export function Navbar() {
             </button>
           ))}
           <div className="pt-2 border-t border-[#202020]/10 flex flex-col gap-2">
+            {whatsappUrl ? (
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => {
+                  trackWhatsAppClick({
+                    eventType: 'whatsapp_contact',
+                    sourcePage: 'mobile_navbar',
+                  });
+                  setMobileOpen(false);
+                }}
+                className="w-full py-2.5 px-4 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md text-center inline-flex items-center justify-center gap-2"
+              >
+                <MessageCircle className="w-4 h-4 text-[#B58B61]" />
+                WhatsApp Us
+              </a>
+            ) : null}
             <button
               type="button"
               onClick={() => {
                 setMobileOpen(false);
                 navigate('/request-quote');
               }}
-              className="w-full py-2.5 px-4 text-sm font-medium bg-[#202020] text-[#FFFFFF] rounded-md text-center"
-            >
-              Request a Quote
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMobileOpen(false);
-                navigate(user ? '/account' : '/login');
-              }}
               className="w-full py-2.5 px-4 text-sm font-medium border border-[#202020]/20 text-[#202020] rounded-md text-center"
             >
-              {user ? 'My Account' : 'Customer Sign In'}
+              Request Wholesale Quote
             </button>
           </div>
         </div>

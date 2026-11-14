@@ -14,25 +14,25 @@ export function PrivacyPolicyPage() {
         </h1>
         <div className="space-y-4 text-sm sm:text-base text-[#202020]/80 leading-relaxed">
           <p>
-            Eimesly Packages, operated by EIMESLY LTD in Kigali, Rwanda, collects contact, business, and delivery information solely to process orders, prepare wholesale quotations, and respond to customer enquiries.
+            Eimesly Packages, operated by EIMESLY LTD in Kigali, Rwanda, respects your privacy. Customers can browse our product catalogue and initiate orders directly via WhatsApp without creating a website account or submitting payment card details online.
           </p>
           <h2 className="text-lg font-semibold text-[#202020] pt-2">
             1. Information We Collect
           </h2>
           <p>
-            When you place an order, request a quotation, create a customer account, or submit a contact enquiry, we record your name, phone number, optional email address, business name, delivery address, and order specifications.
+            When you submit a quotation request, contact enquiry, or confirm an order with our sales team via WhatsApp, we record the contact name, phone number, optional email address, business name, delivery details, and packaging specifications required to fulfill your request.
           </p>
           <h2 className="text-lg font-semibold text-[#202020] pt-2">
             2. How We Use Information
           </h2>
           <p>
-            Customer records are used exclusively to verify availability, issue quotations, coordinate delivery or collection, and maintain order and invoice history. We do not sell customer data to third parties.
+            Customer details are used exclusively to confirm stock availability, prepare wholesale quotations, coordinate delivery or collection in Kigali and across Rwanda, and maintain accurate invoicing records. We do not sell customer data to third parties.
           </p>
           <h2 className="text-lg font-semibold text-[#202020] pt-2">
-            3. Data Security & Access
+            3. Security & Confidentiality
           </h2>
           <p>
-            Administrative access to customer orders and enquiries is protected by role-based authentication. Customers with registered accounts can review and update their profile details at any time.
+            Administrative access to quotations, customer enquiries, and confirmed order logs is restricted to authorized EIMESLY LTD personnel through role-based authentication.
           </p>
         </div>
       </div>
@@ -54,25 +54,25 @@ export function TermsPage() {
         </h1>
         <div className="space-y-4 text-sm sm:text-base text-[#202020]/80 leading-relaxed">
           <p>
-            These Terms & Conditions govern retail orders, wholesale orders, and quotation requests placed through Eimesly Packages (EIMESLY LTD).
+            These Terms & Conditions govern retail orders, wholesale enquiries, and quotation requests initiated through Eimesly Packages (EIMESLY LTD).
           </p>
           <h2 className="text-lg font-semibold text-[#202020] pt-2">
-            1. Pricing, Quotations & Availability
+            1. WhatsApp Ordering & Price Confirmation
           </h2>
           <p>
-            Prices are displayed in Rwandan Francs (RWF) where configured. Listings marked Price on Request or Sample Catalogue Item require formal confirmation by our sales team before payment or dispatch. Quotations remain valid until the validity date specified on the issued quote.
+            Displayed retail prices are listed in Rwandan Francs (RWF) where configured. Submitting an Order Now or Wholesale Quote message via WhatsApp opens a direct conversation with our sales team to confirm current stock availability, delivery timelines, and final payment instructions.
           </p>
           <h2 className="text-lg font-semibold text-[#202020] pt-2">
-            2. Minimum Order Quantities & Wholesale
+            2. Minimum Order Quantities & Wholesale Quotes
           </h2>
           <p>
-            Wholesale pricing applies where Minimum Order Quantity (MOQ) thresholds are met. Custom packaging runs are subject to artwork approval and confirmed production quantities.
+            Minimum Order Quantities (MOQ) apply as listed on each product page. Commercial and wholesale pricing is quoted directly by our sales representatives upon enquiry and remains valid until the validity date specified on the issued quotation.
           </p>
           <h2 className="text-lg font-semibold text-[#202020] pt-2">
-            3. Payment Verification
+            3. Payment & Delivery
           </h2>
           <p>
-            Orders are confirmed once payment arrangement is verified through a configured payment method or approved directly by an authorized Eimesly Packages representative.
+            Eimesly Packages does not collect credit or debit card information on this website. Payment and Kigali collection or delivery arrangements are confirmed directly with our authorized sales team via WhatsApp or official company invoice.
           </p>
         </div>
       </div>
@@ -85,20 +85,24 @@ export function FaqPage() {
 
   const faqs = [
     {
+      q: 'How do I place an order on Eimesly Packages?',
+      a: 'Simply browse our catalogue, select your preferred size, variation, packaging unit, and quantity, and click Order Now. WhatsApp will open automatically with your pre-filled product details ready to send to our Kigali sales team.',
+    },
+    {
+      q: 'Do I need to create an account or use a shopping cart?',
+      a: 'No. We do not require customer registration, website login, shopping carts, or online card payments. Every product can be ordered directly through WhatsApp.',
+    },
+    {
       q: 'Do you supply both wholesale and retail customers?',
-      a: 'Yes. Individual buyers can order smaller packs where available, while cafés, restaurants, hotels, supermarkets, and caterers can order in bulk or request formal wholesale quotations.',
+      a: 'Yes. Individual buyers can order standard packs directly via WhatsApp, while cafés, restaurants, hotels, supermarkets, and caterers can click Request Wholesale Quote for bulk volume pricing.',
     },
     {
       q: 'How do I order products marked "Price on Request"?',
-      a: 'You can add them to your cart and submit an order for direct price confirmation, or use the Request a Quote page to specify your quantity and packaging sizes.',
-    },
-    {
-      q: 'Do I need an account to place an order or request a quote?',
-      a: 'No. Guest checkout and guest quotation requests are fully supported. Creating an account is optional and helps you track orders and view past quotes.',
+      a: 'Click Order Now or Request Wholesale Quote on the product page to send the item details to our WhatsApp desk, or submit the Request a Quote form for custom packaging specifications.',
     },
     {
       q: 'Can I request custom-branded cups, bags, or takeaway boxes?',
-      a: 'Yes. Visit the Wholesale page or Request a Quote page and upload a reference image or logo along with your estimated quantities.',
+      a: 'Yes. Visit the Wholesale page or Request a Quote page to upload a reference image or logo along with your estimated quantities, or message us directly on WhatsApp.',
     },
     {
       q: 'Where is Eimesly Packages located?',

@@ -21,6 +21,7 @@ interface ProductFormState {
   packagingQuantity: string;
   unitPrice: string;
   wholesalePrice: string;
+  costPrice: string;
   moq: string;
   stockQuantity: string;
   lowStockThreshold: string;
@@ -43,6 +44,7 @@ const EMPTY_FORM: ProductFormState = {
   packagingQuantity: '',
   unitPrice: '',
   wholesalePrice: '',
+  costPrice: '',
   moq: '1',
   stockQuantity: '0',
   lowStockThreshold: '10',
@@ -63,6 +65,7 @@ export function AdminProducts() {
   const [form, setForm] = useState<ProductFormState>(EMPTY_FORM);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [error, setError] = useState('');
 
   useDocumentMeta('Product Management | Eimesly Packages Admin');
@@ -111,6 +114,10 @@ export function AdminProducts() {
       packagingQuantity: p.packagingQuantity,
       unitPrice: p.unitPrice !== null ? String(p.unitPrice) : '',
       wholesalePrice: p.wholesalePrice !== null ? String(p.wholesalePrice) : '',
+      costPrice:
+        p.costPrice !== null && p.costPrice !== undefined
+          ? String(p.costPrice)
+          : '',
       moq: String(p.moq || 1),
       stockQuantity: String(p.stockQuantity || 0),
       lowStockThreshold: String(p.lowStockThreshold || 10),
@@ -165,6 +172,7 @@ export function AdminProducts() {
       unitPrice: form.unitPrice !== '' ? Number(form.unitPrice) : null,
       wholesalePrice:
         form.wholesalePrice !== '' ? Number(form.wholesalePrice) : null,
+      costPrice: form.costPrice !== '' ? Number(form.costPrice) : null,
       moq: Number(form.moq || 1),
       stockQuantity: Number(form.stockQuantity || 0),
       lowStockThreshold: Number(form.lowStockThreshold || 10),
@@ -200,6 +208,7 @@ export function AdminProducts() {
   const handleDelete = async (p: Product) => {
     try {
       await apiFetch(`/api/admin/products/${p.id}`, { method: 'DELETE' });
+      setConfirmDeleteId(null);
       await loadData();
       await refreshBootstrap();
     } catch (err) {
@@ -305,14 +314,33 @@ export function AdminProducts() {
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(p)}
-                            aria-label={`Delete ${p.name}`}
-                            className="p-1.5 text-[#202020]/50 hover:text-red-600"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {confirmDeleteId === p.id ? (
+                            <span className="inline-flex items-center gap-1 ml-1">
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(p)}
+                                className="px-2 py-0.5 text-[11px] font-semibold bg-red-600 text-white rounded"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="px-2 py-0.5 text-[11px] border border-[#202020]/20 rounded"
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(p.id)}
+                              aria-label={`Delete ${p.name}`}
+                              className="p-1.5 text-[#202020]/50 hover:text-red-600"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -469,7 +497,7 @@ export function AdminProducts() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
                 <div>
                   <label className="block text-xs font-semibold mb-1">
                     Unit Price (RWF)
@@ -497,6 +525,21 @@ export function AdminProducts() {
                       setForm({ ...form, wholesalePrice: e.target.value })
                     }
                     placeholder="Optional"
+                    className="w-full px-3 py-2 text-sm border border-[#202020]/20 rounded-md tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1">
+                    Cost Price (RWF)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={form.costPrice}
+                    onChange={(e) =>
+                      setForm({ ...form, costPrice: e.target.value })
+                    }
+                    placeholder="Internal"
                     className="w-full px-3 py-2 text-sm border border-[#202020]/20 rounded-md tabular-nums"
                   />
                 </div>

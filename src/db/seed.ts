@@ -10,6 +10,14 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   faviconUrl: '',
   phone: '',
   whatsappNumber: '',
+  whatsappCountryCode: '250',
+  whatsappDefaultOrderMessage:
+    'Hello Eimesly Packages!\n\nI would like to order the following product:',
+  whatsappWholesaleMessage:
+    'Hello Eimesly Packages!\n\nI am interested in purchasing your products in bulk.',
+  whatsappGeneralMessage:
+    'Hello Eimesly Packages! I would like to enquire about your packaging products and availability.',
+  showWholesalePricesPublicly: false,
   email: '',
   address: 'Kigali, Rwanda',
   city: 'Kigali',
@@ -20,14 +28,14 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   currency: 'RWF',
   instagramUrl: '',
   facebookUrl: '',
-  deliveryFee: 0,
-  freeDeliveryThreshold: 0,
-  deliveryNotes: 'Delivery arrangements are confirmed with our team upon order review.',
-  enableMobileMoney: false,
-  mobileMoneyInstructions: '',
-  enableBankTransfer: false,
-  bankTransferInstructions: '',
-  enableCashOnDelivery: false,
+  deliveryNotes:
+    'Delivery and collection arrangements are confirmed directly with our team on WhatsApp.',
+  collectionPointEnabled: true,
+  collectionAddress: 'Kigali, Rwanda',
+  collectionHours: '',
+  orderNumberPrefix: 'EP-',
+  notificationEmail: '',
+  notifyOnNewQuotation: true,
   maintenanceMode: false,
   googleAnalyticsId: '',
   facebookPixelId: '',
@@ -41,20 +49,20 @@ export const DEFAULT_WEBSITE_CONTENT: WebsiteContent = {
   heroImageUrl: '/src/assets/images/hero_packaging_collection_1794679094459.jpg',
   wholesaleHeadline: 'Your Reliable Wholesale Packaging Partner',
   wholesaleDescription:
-    'Whether you manage a restaurant, café, hotel, supermarket, or catering business, Eimesly Packages provides hot and cold packaging solutions to support your operations.',
+    'Whether you manage a restaurant, café, hotel, supermarket, or catering business, Eimesly Packages provides hot and cold packaging solutions with direct WhatsApp ordering and tailored bulk quotes.',
   promoBannerHeadline: 'Everything Your Business Needs for Better Packaging.',
   promoBannerButtonText: 'EXPLORE OUR PRODUCTS',
   aboutHeading: 'About Eimesly Packages',
   aboutDescription:
-    'Eimesly Packages is a packaging supply business focused on providing practical and quality packaging solutions for businesses and individuals. We specialize in coffee cups, clear plastic cups for iced drinks, paper and plastic drinking straws, takeaway containers, and other food-service packaging supplies.\n\nOur goal is to make packaging products accessible to cafés, restaurants, hotels, retailers, and other businesses through convenient ordering and reliable customer service.',
+    'Eimesly Packages is a packaging supply business focused on providing practical and quality packaging solutions for businesses and individuals. We specialize in coffee cups, clear plastic cups for iced drinks, paper and plastic drinking straws, takeaway containers, and other food-service packaging supplies.\n\nOur goal is to make packaging products accessible to cafés, restaurants, hotels, retailers, and other businesses through direct WhatsApp ordering and reliable customer service.',
   aboutMission:
     'To supply practical, food-grade packaging products that help hospitality businesses, retailers, and event organizers operate smoothly across Rwanda and the wider region.',
   aboutVision:
     'To become the trusted partner for commercial and retail food-service packaging across East Africa through consistent product availability and attentive service.',
   aboutValues: [
     'Practical product quality suited for daily food-service operations',
-    'Clear, responsive wholesale and retail customer support',
-    'Flexible ordering for growing cafés, restaurants, and enterprises',
+    'Direct, responsive wholesale and retail ordering on WhatsApp',
+    'Flexible supply for growing cafés, restaurants, and enterprises',
     'Honest specifications and transparent quotation workflows',
   ],
   footerDescription:

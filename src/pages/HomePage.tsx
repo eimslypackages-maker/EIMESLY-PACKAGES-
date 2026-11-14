@@ -2,11 +2,17 @@ import {
   ArrowRight,
   Building2,
   CheckCircle2,
+  MessageCircle,
   PackageCheck,
-  ShoppingCart,
   Truck,
 } from 'lucide-react';
 import { useApp, useDocumentMeta } from '../context/AppContext';
+import {
+  buildGeneralEnquiryMessage,
+  buildWhatsAppUrl,
+  buildWholesaleQuoteMessage,
+  trackWhatsAppClick,
+} from '../lib/whatsapp';
 import { ProductCard } from '../components/ProductCard';
 import { SmartImage } from '../components/SmartImage';
 
@@ -20,6 +26,20 @@ export function HomePage() {
   useDocumentMeta(
     content?.seoTitle || 'Eimesly Packages – Smart Packaging Solutions for Every Business',
     content?.seoDescription
+  );
+
+  const generalWhatsappUrl = buildWhatsAppUrl(
+    settings,
+    buildGeneralEnquiryMessage(settings)
+  );
+  const wholesaleWhatsappUrl = buildWhatsAppUrl(
+    settings,
+    buildWholesaleQuoteMessage({
+      productName: 'Wholesale Packaging Supply',
+      requiredQuantity: 'Bulk Order',
+      location: settings?.address || 'Kigali, Rwanda',
+      template: settings?.whatsappWholesaleMessage,
+    })
   );
 
   const benefits = [
@@ -39,9 +59,9 @@ export function HomePage() {
       desc: 'Dedicated team in Kigali supporting restaurants, cafés, hotels, and catering operations.',
     },
     {
-      icon: ShoppingCart,
-      title: 'Convenient Ordering',
-      desc: 'Browse online, submit orders directly, or request tailored wholesale quotations.',
+      icon: MessageCircle,
+      title: 'Instant WhatsApp Ordering',
+      desc: 'Browse our catalogue and click Order Now to send your product details directly to our WhatsApp sales desk.',
     },
   ];
 
@@ -52,19 +72,19 @@ export function HomePage() {
     },
     {
       title: 'Wholesale & Retail Options',
-      desc: 'Accessible quantities for independent shops alongside structured bulk pricing for high-volume buyers.',
+      desc: 'Accessible quantities for independent shops alongside tailored bulk quotations for high-volume buyers.',
     },
     {
       title: 'Business-Focused Packaging Solutions',
       desc: 'Practical sizes and materials selected specifically for cafés, restaurants, hotels, supermarkets, and caterers.',
     },
     {
-      title: 'Convenient Ordering Workflow',
-      desc: 'Order directly online or request a formal quotation with custom specifications and reference files.',
+      title: 'Direct WhatsApp Ordering',
+      desc: 'Order immediately via WhatsApp without creating an account or filling out complicated checkout forms.',
     },
     {
       title: 'Responsive Customer Support',
-      desc: 'Reach our Kigali supply team via phone, WhatsApp, or direct enquiry forms whenever you need assistance.',
+      desc: 'Reach our Kigali supply team via WhatsApp, phone, or direct enquiry forms whenever you need assistance.',
     },
     {
       title: 'Reliable Supply Continuity',
@@ -90,9 +110,9 @@ export function HomePage() {
               </h1>
               <p className="text-base sm:text-lg text-[#202020]/75 leading-relaxed max-w-xl">
                 {content?.heroSubtext ||
-                  'Discover quality food packaging products designed for cafés, restaurants, hotels, catering businesses, and retailers.'}
+                  'Discover quality food packaging products designed for cafés, restaurants, hotels, catering businesses, and retailers. Order directly via WhatsApp.'}
               </p>
-              <div className="flex flex-wrap items-center gap-3.5 pt-2">
+              <div className="flex flex-wrap items-center gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => navigate('/shop')}
@@ -101,13 +121,47 @@ export function HomePage() {
                   EXPLORE PRODUCTS
                   <ArrowRight className="w-4 h-4" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => navigate('/request-quote')}
-                  className="px-6 py-3.5 text-sm font-semibold border border-[#202020] text-[#202020] bg-transparent rounded-md hover:bg-[#202020] hover:text-[#FFFFFF] transition-colors whitespace-nowrap"
-                >
-                  REQUEST A QUOTE
-                </button>
+                {wholesaleWhatsappUrl ? (
+                  <a
+                    href={wholesaleWhatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() =>
+                      trackWhatsAppClick({
+                        eventType: 'wholesale_quote',
+                        sourcePage: 'home_hero',
+                      })
+                    }
+                    className="px-6 py-3.5 text-sm font-semibold border border-[#202020] text-[#202020] bg-transparent rounded-md hover:bg-[#202020] hover:text-[#FFFFFF] transition-colors whitespace-nowrap"
+                  >
+                    REQUEST A WHOLESALE QUOTE
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => navigate('/request-quote')}
+                    className="px-6 py-3.5 text-sm font-semibold border border-[#202020] text-[#202020] bg-transparent rounded-md hover:bg-[#202020] hover:text-[#FFFFFF] transition-colors whitespace-nowrap"
+                  >
+                    REQUEST A WHOLESALE QUOTE
+                  </button>
+                )}
+                {generalWhatsappUrl ? (
+                  <a
+                    href={generalWhatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() =>
+                      trackWhatsAppClick({
+                        eventType: 'whatsapp_contact',
+                        sourcePage: 'home_hero',
+                      })
+                    }
+                    className="px-5 py-3.5 text-sm font-semibold bg-[#B58B61] text-[#FFFFFF] rounded-md hover:bg-[#9f764e] transition-colors inline-flex items-center gap-2 whitespace-nowrap"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    CONTACT US VIA WHATSAPP
+                  </a>
+                ) : null}
               </div>
             </div>
 
@@ -291,20 +345,55 @@ export function HomePage() {
                   'Whether you manage a restaurant, café, hotel, supermarket, or catering business, Eimesly Packages provides packaging solutions to support your operations.'}
               </p>
               <div className="pt-2 flex flex-wrap gap-3.5">
-                <button
-                  type="button"
-                  onClick={() => navigate('/wholesale')}
-                  className="px-5 py-3 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors whitespace-nowrap"
-                >
-                  Wholesale Enquiry
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigate('/contact')}
-                  className="px-5 py-3 text-sm font-semibold border border-[#202020]/30 bg-[#FFFFFF] text-[#202020] rounded-md hover:bg-[#F5F5F5] transition-colors whitespace-nowrap"
-                >
-                  Contact Our Team
-                </button>
+                {wholesaleWhatsappUrl ? (
+                  <a
+                    href={wholesaleWhatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() =>
+                      trackWhatsAppClick({
+                        eventType: 'wholesale_quote',
+                        sourcePage: 'home_wholesale',
+                      })
+                    }
+                    className="px-5 py-3 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors inline-flex items-center gap-2 whitespace-nowrap"
+                  >
+                    <MessageCircle className="w-4 h-4 text-[#B58B61]" />
+                    Request a Wholesale Quote
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => navigate('/wholesale')}
+                    className="px-5 py-3 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors whitespace-nowrap"
+                  >
+                    Request a Wholesale Quote
+                  </button>
+                )}
+                {generalWhatsappUrl ? (
+                  <a
+                    href={generalWhatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() =>
+                      trackWhatsAppClick({
+                        eventType: 'whatsapp_contact',
+                        sourcePage: 'home_wholesale',
+                      })
+                    }
+                    className="px-5 py-3 text-sm font-semibold border border-[#202020]/30 bg-[#FFFFFF] text-[#202020] rounded-md hover:bg-[#F5F5F5] transition-colors whitespace-nowrap"
+                  >
+                    Contact Us via WhatsApp
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => navigate('/contact')}
+                    className="px-5 py-3 text-sm font-semibold border border-[#202020]/30 bg-[#FFFFFF] text-[#202020] rounded-md hover:bg-[#F5F5F5] transition-colors whitespace-nowrap"
+                  >
+                    Contact Our Team
+                  </button>
+                )}
               </div>
             </div>
             <div className="lg:col-span-5">
@@ -382,22 +471,32 @@ export function HomePage() {
             Planning a Bulk Order or Custom Packaging Run?
           </h2>
           <p className="text-base text-[#202020]/75 max-w-2xl mx-auto leading-relaxed">
-            Share your packaging specifications, estimated quantities, or custom sizing requirements. Our Kigali sales team responds promptly with tailored quotations.
+            Message our Kigali sales team on WhatsApp or share your packaging specifications and estimated quantities for a tailored wholesale quotation.
           </p>
           <div className="pt-2 flex flex-wrap justify-center gap-3.5">
+            {generalWhatsappUrl ? (
+              <a
+                href={generalWhatsappUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() =>
+                  trackWhatsAppClick({
+                    eventType: 'whatsapp_contact',
+                    sourcePage: 'home_enquiries',
+                  })
+                }
+                className="px-6 py-3 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors inline-flex items-center gap-2"
+              >
+                <MessageCircle className="w-4 h-4 text-[#B58B61]" />
+                Chat on WhatsApp
+              </a>
+            ) : null}
             <button
               type="button"
               onClick={() => navigate('/request-quote')}
-              className="px-6 py-3 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors"
-            >
-              Request a Quotation
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/contact')}
               className="px-6 py-3 text-sm font-semibold border border-[#202020]/25 bg-[#FFFFFF] text-[#202020] rounded-md hover:bg-[#F3EEE6] transition-colors"
             >
-              Send an Enquiry
+              Request a Wholesale Quote
             </button>
           </div>
         </div>

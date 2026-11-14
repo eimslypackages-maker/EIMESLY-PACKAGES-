@@ -1,8 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowDownUp, X } from 'lucide-react';
+import { ArrowDownUp, Download, X } from 'lucide-react';
 import { useDocumentMeta } from '../../context/AppContext';
 import { apiFetch } from '../../lib/api';
-import { AVAILABILITY_LABELS, formatDateTime } from '../../lib/format';
+import {
+  AVAILABILITY_LABELS,
+  downloadCsv,
+  formatDateTime,
+  formatRwf,
+} from '../../lib/format';
 import { AdminLayout } from './AdminLayout';
 import type { InventoryMovement, Product } from '../../shared/types';
 
@@ -83,28 +88,103 @@ export function AdminInventory() {
     return true;
   });
 
+  const allProducts = data?.products || [];
+  const totalValuation = allProducts.reduce(
+    (sum, p) => sum + p.stockQuantity * (p.costPrice ?? p.unitPrice ?? 0),
+    0
+  );
+  const lowCount = allProducts.filter(
+    (p) =>
+      p.availabilityStatus !== 'sample_listing' &&
+      p.stockQuantity > 0 &&
+      p.stockQuantity <= p.lowStockThreshold
+  ).length;
+  const outCount = allProducts.filter(
+    (p) =>
+      p.availabilityStatus === 'out_of_stock' ||
+      (p.availabilityStatus !== 'sample_listing' && p.stockQuantity === 0)
+  ).length;
+
+  const exportInventory = () => {
+    downloadCsv(
+      'eimesly-inventory-report.csv',
+      [
+        'SKU',
+        'Product Name',
+        'Status',
+        'Stock Quantity',
+        'Low Stock Threshold',
+        'Cost / Unit (RWF)',
+        'Stock Valuation (RWF)',
+      ],
+      products.map((p) => {
+        const unitVal = p.costPrice ?? p.unitPrice ?? 0;
+        return [
+          p.sku,
+          p.name,
+          AVAILABILITY_LABELS[p.availabilityStatus] || p.availabilityStatus,
+          p.stockQuantity,
+          p.lowStockThreshold,
+          unitVal,
+          p.stockQuantity * unitVal,
+        ];
+      })
+    );
+  };
+
   return (
     <AdminLayout title="Inventory Management">
-      <div className="space-y-8">
-        <div className="flex flex-wrap gap-2">
-          {[
-            { id: 'all', label: 'All Products' },
-            { id: 'low', label: 'Low-Stock Alerts' },
-            { id: 'out', label: 'Out of Stock' },
-          ].map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => setFilter(f.id as typeof filter)}
-              className={`px-4 py-2 text-sm font-medium rounded-md ${
-                filter === f.id
-                  ? 'bg-[#202020] text-[#FFFFFF]'
-                  : 'bg-[#FFFFFF] border border-[#202020]/15 text-[#202020]'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg p-4">
+            <p className="text-xs text-[#202020]/60">Total Inventory Valuation</p>
+            <p className="mt-1 text-xl font-bold text-[#202020] tabular-nums">
+              {formatRwf(totalValuation)}
+            </p>
+          </div>
+          <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg p-4">
+            <p className="text-xs text-[#202020]/60">Low-Stock Alerts</p>
+            <p className="mt-1 text-xl font-bold text-amber-700 tabular-nums">
+              {lowCount}
+            </p>
+          </div>
+          <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg p-4">
+            <p className="text-xs text-[#202020]/60">Out-of-Stock Items</p>
+            <p className="mt-1 text-xl font-bold text-red-700 tabular-nums">
+              {outCount}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'all', label: 'All Products' },
+              { id: 'low', label: 'Low-Stock Alerts' },
+              { id: 'out', label: 'Out of Stock' },
+            ].map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setFilter(f.id as typeof filter)}
+                className={`px-4 py-2 text-sm font-medium rounded-md ${
+                  filter === f.id
+                    ? 'bg-[#202020] text-[#FFFFFF]'
+                    : 'bg-[#FFFFFF] border border-[#202020]/15 text-[#202020]'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={exportInventory}
+            className="px-4 py-2 text-xs font-semibold border border-[#202020]/20 bg-[#FFFFFF] rounded-md inline-flex items-center gap-1.5 hover:bg-[#F5F5F5]"
+          >
+            <Download className="w-4 h-4" />
+            Export Inventory CSV
+          </button>
         </div>
 
         <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg overflow-hidden">
@@ -116,51 +196,58 @@ export function AdminInventory() {
                   <th className="py-3 px-4">SKU</th>
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4 text-right">Available Stock</th>
-                  <th className="py-3 px-4 text-right">Alert Threshold</th>
+                  <th className="py-3 px-4 text-right">Threshold</th>
+                  <th className="py-3 px-4 text-right">Valuation</th>
                   <th className="py-3 px-4 text-right">Update Stock</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#202020]/10">
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-[#202020]/60">
+                    <td colSpan={7} className="py-8 text-center text-[#202020]/60">
                       Loading inventory...
                     </td>
                   </tr>
                 ) : (
-                  products.map((p) => (
-                    <tr key={p.id} className="hover:bg-[#F5F5F5]/60">
-                      <td className="py-3 px-4 font-medium text-[#202020]">
-                        {p.name}
-                      </td>
-                      <td className="py-3 px-4 font-mono text-xs">{p.sku}</td>
-                      <td className="py-3 px-4 text-xs">
-                        {AVAILABILITY_LABELS[p.availabilityStatus] ||
-                          p.availabilityStatus}
-                      </td>
-                      <td className="py-3 px-4 text-right font-bold tabular-nums">
-                        {p.stockQuantity}
-                      </td>
-                      <td className="py-3 px-4 text-right tabular-nums text-[#202020]/65">
-                        {p.lowStockThreshold}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAdjustProduct(p);
-                            setMovementType('addition');
-                            setQuantity('');
-                            setReason('');
-                          }}
-                          className="px-3 py-1.5 text-xs font-semibold border border-[#202020]/20 rounded hover:bg-[#F5F5F5] inline-flex items-center gap-1"
-                        >
-                          <ArrowDownUp className="w-3.5 h-3.5" />
-                          Adjust
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                  products.map((p) => {
+                    const unitVal = p.costPrice ?? p.unitPrice ?? 0;
+                    return (
+                      <tr key={p.id} className="hover:bg-[#F5F5F5]/60">
+                        <td className="py-3 px-4 font-medium text-[#202020]">
+                          {p.name}
+                        </td>
+                        <td className="py-3 px-4 font-mono text-xs">{p.sku}</td>
+                        <td className="py-3 px-4 text-xs">
+                          {AVAILABILITY_LABELS[p.availabilityStatus] ||
+                            p.availabilityStatus}
+                        </td>
+                        <td className="py-3 px-4 text-right font-bold tabular-nums">
+                          {p.stockQuantity}
+                        </td>
+                        <td className="py-3 px-4 text-right tabular-nums text-[#202020]/65">
+                          {p.lowStockThreshold}
+                        </td>
+                        <td className="py-3 px-4 text-right tabular-nums text-xs">
+                          {formatRwf(p.stockQuantity * unitVal)}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAdjustProduct(p);
+                              setMovementType('addition');
+                              setQuantity('');
+                              setReason('');
+                            }}
+                            className="px-3 py-1.5 text-xs font-semibold border border-[#202020]/20 rounded hover:bg-[#F5F5F5] inline-flex items-center gap-1"
+                          >
+                            <ArrowDownUp className="w-3.5 h-3.5" />
+                            Adjust
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

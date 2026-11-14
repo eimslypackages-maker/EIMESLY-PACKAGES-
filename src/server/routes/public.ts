@@ -4,13 +4,11 @@ import { db } from '../../db/index.ts';
 import {
   categories,
   enquiries,
-  inventoryMovements,
   mediaAssets,
-  orderItems,
-  orders,
   products,
   quotations,
   siteSettings,
+  whatsappClicks,
 } from '../../db/schema.ts';
 import {
   DEFAULT_WEBSITE_CONTENT,
@@ -20,6 +18,16 @@ import {
 import { optionalAuth, AuthRequest } from '../../middleware/auth.ts';
 
 export const publicRouter = Router();
+
+function sanitizePublicProduct<
+  T extends { wholesalePrice: number | null; costPrice: number | null }
+>(p: T, showWholesalePricesPublicly: boolean): T {
+  return {
+    ...p,
+    wholesalePrice: showWholesalePricesPublicly ? p.wholesalePrice : null,
+    costPrice: null,
+  };
+}
 
 async function getSettingValue<T>(key: string, fallback: T): Promise<T> {
   const rows = await db
@@ -50,14 +58,18 @@ publicRouter.get('/bootstrap', async (_req, res) => {
         .limit(8),
     ]);
 
+    const showWholesale = Boolean(settings.showWholesalePricesPublicly);
     const catById = new Map(activeCategories.map((c) => [c.id, c]));
     const featuredProducts = featuredRows.map((p) => {
       const cat = p.categoryId ? catById.get(p.categoryId) : undefined;
-      return {
-        ...p,
-        categoryName: cat?.name ?? 'Uncategorized',
-        categorySlug: cat?.slug ?? '',
-      };
+      return sanitizePublicProduct(
+        {
+          ...p,
+          categoryName: cat?.name ?? 'Uncategorized',
+          categorySlug: cat?.slug ?? '',
+        },
+        showWholesale
+      );
     });
 
     res.json({
@@ -156,14 +168,14 @@ publicRouter.get('/products', async (req, res) => {
     const page = Math.max(1, Number(req.query.page || 1));
     const limit = Math.min(20, Math.max(1, Number(req.query.limit || 20)));
 
-    const allCats = await db.select().from(categories);
+    const [settings, allCats, allActive] = await Promise.all([
+      getSettingValue('settings', DEFAULT_WEBSITE_SETTINGS),
+      db.select().from(categories),
+      db.select().from(products).where(eq(products.isActive, true)),
+    ]);
+    const showWholesale = Boolean(settings.showWholesalePricesPublicly);
     const catById = new Map(allCats.map((c) => [c.id, c]));
     const catBySlug = new Map(allCats.map((c) => [c.slug, c]));
-
-    const allActive = await db
-      .select()
-      .from(products)
-      .where(eq(products.isActive, true));
 
     // Facets computed from all active products
     const materialsSet = new Set<string>();
@@ -180,11 +192,14 @@ publicRouter.get('/products', async (req, res) => {
     // Filter in memory for rich JSONB array + multi-field matching
     let filtered = allActive.map((p) => {
       const cat = p.categoryId ? catById.get(p.categoryId) : undefined;
-      return {
-        ...p,
-        categoryName: cat?.name ?? 'Uncategorized',
-        categorySlug: cat?.slug ?? '',
-      };
+      return sanitizePublicProduct(
+        {
+          ...p,
+          categoryName: cat?.name ?? 'Uncategorized',
+          categorySlug: cat?.slug ?? '',
+        },
+        showWholesale
+      );
     });
 
     if (categorySlug) {
@@ -318,21 +333,32 @@ publicRouter.get('/products/:slug', async (req, res) => {
           .limit(5)
       : [];
 
+    const settings = await getSettingValue('settings', DEFAULT_WEBSITE_SETTINGS);
+    const showWholesale = Boolean(settings.showWholesalePricesPublicly);
+
     const related = relatedRows
       .filter((r) => r.id !== p.id)
       .slice(0, 4)
-      .map((r) => ({
-        ...r,
-        categoryName: category?.name ?? 'Uncategorized',
-        categorySlug: category?.slug ?? '',
-      }));
+      .map((r) =>
+        sanitizePublicProduct(
+          {
+            ...r,
+            categoryName: category?.name ?? 'Uncategorized',
+            categorySlug: category?.slug ?? '',
+          },
+          showWholesale
+        )
+      );
 
     res.json({
-      product: {
-        ...p,
-        categoryName: category?.name ?? 'Uncategorized',
-        categorySlug: category?.slug ?? '',
-      },
+      product: sanitizePublicProduct(
+        {
+          ...p,
+          categoryName: category?.name ?? 'Uncategorized',
+          categorySlug: category?.slug ?? '',
+        },
+        showWholesale
+      ),
       related,
     });
   } catch (err) {
@@ -344,7 +370,7 @@ publicRouter.get('/products/:slug', async (req, res) => {
 // Media upload & serving (works on desktop & mobile without external bucket keys)
 publicRouter.post('/media/upload', optionalAuth, async (req: AuthRequest, res) => {
   try {
-    const { filename, mimeType, dataBase64, altText } = req.body || {};
+    const { filename, mimeType, dataBase64, altText, folder } = req.body || {};
     if (!filename || !mimeType || !dataBase64) {
       return res.status(400).json({ error: 'Missing image file payload' });
     }
@@ -374,6 +400,7 @@ publicRouter.post('/media/upload', optionalAuth, async (req: AuthRequest, res) =
         mimeType: String(mimeType),
         dataBase64: cleanBase64,
         altText: String(altText || filename).slice(0, 200),
+        folder: String(folder || 'general').slice(0, 60),
         uploadedBy: req.appUser?.id ?? null,
       })
       .returning({
@@ -381,6 +408,7 @@ publicRouter.post('/media/upload', optionalAuth, async (req: AuthRequest, res) =
         filename: mediaAssets.filename,
         mimeType: mediaAssets.mimeType,
         altText: mediaAssets.altText,
+        folder: mediaAssets.folder,
       });
 
     res.status(201).json({
@@ -388,6 +416,7 @@ publicRouter.post('/media/upload', optionalAuth, async (req: AuthRequest, res) =
       url: `/api/media/${inserted.id}`,
       filename: inserted.filename,
       altText: inserted.altText,
+      folder: inserted.folder,
     });
   } catch (err) {
     console.error('Media upload failed:', err);
@@ -418,221 +447,30 @@ publicRouter.get('/media/:id', async (req, res) => {
   }
 });
 
-// Orders (Guest or Authenticated)
-publicRouter.post('/orders', optionalAuth, async (req: AuthRequest, res) => {
+// WhatsApp Click & Enquiry Analytics (non-blocking tracking, not treated as confirmed sales)
+publicRouter.post('/analytics/whatsapp-click', async (req, res) => {
   try {
-    const {
-      customerName,
-      phone,
-      email,
-      businessName,
-      deliveryAddress,
-      district,
-      orderNotes,
-      paymentMethod,
-      items,
-    } = req.body || {};
+    const b = req.body || {};
+    const eventType = ['product_order', 'wholesale_quote', 'whatsapp_contact'].includes(
+      String(b.eventType)
+    )
+      ? String(b.eventType)
+      : 'whatsapp_contact';
 
-    if (!customerName || !phone || !deliveryAddress || !district) {
-      return res.status(400).json({
-        error: 'Full name, phone number, delivery address, and district are required',
-      });
-    }
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'Your cart is empty' });
-    }
-
-    const productIds = items
-      .map((i: { productId: number }) => Number(i.productId))
-      .filter((id: number) => Number.isInteger(id) && id > 0);
-
-    const dbProducts = productIds.length
-      ? await db
-          .select()
-          .from(products)
-          .where(inArray(products.id, productIds))
-      : [];
-    const prodMap = new Map(dbProducts.map((p) => [p.id, p]));
-
-    const settings = await getSettingValue('settings', DEFAULT_WEBSITE_SETTINGS);
-
-    let subtotal = 0;
-    let hasUnpricedItems = false;
-    let isWholesaleOrder = Boolean(businessName && String(businessName).trim());
-
-    const normalizedItems: Array<{
-      productId: number | null;
-      productName: string;
-      sku: string;
-      selectedSize: string;
-      quantity: number;
-      unitPrice: number;
-      lineTotal: number;
-    }> = [];
-
-    for (const rawItem of items) {
-      const pid = Number(rawItem.productId);
-      const qty = Math.max(1, Math.floor(Number(rawItem.quantity || 1)));
-      const dbProd = prodMap.get(pid);
-      if (!dbProd) {
-        return res
-          .status(400)
-          .json({ error: 'One or more products in your cart could not be found' });
-      }
-      if (qty >= dbProd.moq && dbProd.moq > 1) {
-        isWholesaleOrder = true;
-      }
-      const effectivePrice =
-        dbProd.wholesalePrice && qty >= dbProd.moq && dbProd.moq > 1
-          ? dbProd.wholesalePrice
-          : dbProd.unitPrice;
-
-      if (effectivePrice === null || effectivePrice === undefined) {
-        hasUnpricedItems = true;
-      }
-
-      const unitPrice = effectivePrice ?? 0;
-      const lineTotal = unitPrice * qty;
-      subtotal += lineTotal;
-
-      normalizedItems.push({
-        productId: dbProd.id,
-        productName: dbProd.name,
-        sku: dbProd.sku,
-        selectedSize: String(rawItem.selectedSize || ''),
-        quantity: qty,
-        unitPrice,
-        lineTotal,
-      });
-    }
-
-    const deliveryFee =
-      settings.deliveryFee > 0 &&
-      (settings.freeDeliveryThreshold <= 0 ||
-        subtotal < settings.freeDeliveryThreshold)
-        ? settings.deliveryFee
-        : 0;
-
-    const totalAmount = subtotal + deliveryFee;
-    const orderNumber = `EP-${Date.now().toString().slice(-6)}-${Math.floor(
-      100 + Math.random() * 900
-    )}`;
-
-    const [createdOrder] = await db
-      .insert(orders)
-      .values({
-        orderNumber,
-        userId: req.appUser?.id ?? null,
-        orderType: isWholesaleOrder ? 'wholesale' : 'retail',
-        customerName: String(customerName).trim(),
-        phone: String(phone).trim(),
-        email: String(email || '').trim(),
-        businessName: String(businessName || '').trim(),
-        deliveryAddress: String(deliveryAddress).trim(),
-        district: String(district).trim(),
-        orderNotes: String(orderNotes || '').trim(),
-        paymentMethod: String(paymentMethod || 'arrange_direct'),
-        paymentStatus: 'unpaid',
-        orderStatus: 'new_order',
-        subtotal,
-        deliveryFee,
-        totalAmount,
-        hasUnpricedItems,
-      })
-      .returning();
-
-    const insertedItems = await db
-      .insert(orderItems)
-      .values(
-        normalizedItems.map((it) => ({
-          orderId: createdOrder.id,
-          ...it,
-        }))
-      )
-      .returning();
-
-    // Deduct stock if confirmed stock exists
-    for (const item of normalizedItems) {
-      if (!item.productId) continue;
-      const prod = prodMap.get(item.productId);
-      if (prod && prod.stockQuantity > 0) {
-        const nextStock = Math.max(0, prod.stockQuantity - item.quantity);
-        await db
-          .update(products)
-          .set({
-            stockQuantity: nextStock,
-            availabilityStatus:
-              nextStock === 0 && prod.availabilityStatus === 'in_stock'
-                ? 'out_of_stock'
-                : prod.availabilityStatus,
-            updatedAt: new Date(),
-          })
-          .where(eq(products.id, prod.id));
-
-        await db.insert(inventoryMovements).values({
-          productId: prod.id,
-          movementType: 'order_deduction',
-          quantityChange: -Math.min(prod.stockQuantity, item.quantity),
-          previousStock: prod.stockQuantity,
-          newStock: nextStock,
-          reason: `Order ${orderNumber}`,
-          performedBy: req.appUser?.id ?? null,
-        });
-      }
-    }
-
-    res.status(201).json({
-      order: {
-        ...createdOrder,
-        items: insertedItems,
-      },
+    await db.insert(whatsappClicks).values({
+      eventType,
+      productId: b.productId ? Number(b.productId) : null,
+      productName: String(b.productName || '').slice(0, 180),
+      sku: String(b.sku || '').slice(0, 80),
+      selectedSize: String(b.selectedSize || '').slice(0, 80),
+      quantity: Math.max(1, Math.round(Number(b.quantity || 1))),
+      sourcePage: String(b.sourcePage || '').slice(0, 120),
     });
-  } catch (err) {
-    console.error('Order creation failed:', err);
-    res.status(500).json({ error: 'Unable to submit order. Please try again.' });
-  }
-});
 
-publicRouter.get('/orders/track/:orderNumber', optionalAuth, async (req: AuthRequest, res) => {
-  try {
-    const orderNumber = req.params.orderNumber;
-    const rows = await db
-      .select()
-      .from(orders)
-      .where(eq(orders.orderNumber, orderNumber))
-      .limit(1);
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-    const order = rows[0];
-    const items = await db
-      .select()
-      .from(orderItems)
-      .where(eq(orderItems.orderId, order.id));
-
-    res.json({
-      order: {
-        id: order.id,
-        orderNumber: order.orderNumber,
-        orderType: order.orderType,
-        customerName: order.customerName,
-        businessName: order.businessName,
-        district: order.district,
-        deliveryAddress: order.deliveryAddress,
-        paymentMethod: order.paymentMethod,
-        paymentStatus: order.paymentStatus,
-        orderStatus: order.orderStatus,
-        subtotal: order.subtotal,
-        deliveryFee: order.deliveryFee,
-        totalAmount: order.totalAmount,
-        hasUnpricedItems: order.hasUnpricedItems,
-        createdAt: order.createdAt,
-        items,
-      },
-    });
+    res.status(201).json({ recorded: true });
   } catch (err) {
-    console.error('Order lookup failed:', err);
-    res.status(500).json({ error: 'Failed to retrieve order' });
+    console.error('WhatsApp click log failed:', err);
+    res.status(200).json({ recorded: false });
   }
 });
 

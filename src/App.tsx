@@ -6,23 +6,13 @@
 import { AppProvider, useApp } from './context/AppContext';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
-import { CartDrawer } from './components/CartDrawer';
 import { HomePage } from './pages/HomePage';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { ShopPage } from './pages/ShopPage';
 import { ProductDetailPage } from './pages/ProductDetailPage';
-import {
-  CartPage,
-  CheckoutPage,
-  OrderConfirmationPage,
-} from './pages/CartAndCheckoutPages';
 import { RequestQuotePage } from './pages/RequestQuotePage';
 import { WholesalePage } from './pages/WholesalePage';
 import { AboutPage, ContactPage } from './pages/AboutAndContactPages';
-import {
-  CustomerAuthPage,
-  CustomerDashboardPage,
-} from './pages/AuthAndAccountPages';
 import {
   FaqPage,
   PrivacyPolicyPage,
@@ -51,12 +41,18 @@ import {
 } from './pages/admin/AdminSettingsAndUsers';
 
 function AppRouter() {
-  const { path, bootstrap, navigate } = useApp();
+  const { path, bootstrap, navigate, user } = useApp();
   const pathname = path.split('?')[0].replace(/\/+$/, '') || '/';
+  const isStaff =
+    user !== null &&
+    ['super_admin', 'business_owner', 'business_manager', 'sales_staff', 'inventory_manager'].includes(
+      user.role
+    );
 
   // Admin routes (never expose admin navigation on public storefront)
   if (pathname === '/admin/login') return <AdminLoginPage />;
-  if (pathname === '/admin') return <AdminOverview />;
+  if (pathname === '/admin' || pathname === '/admin/dashboard')
+    return <AdminOverview />;
   if (pathname === '/admin/products') return <AdminProducts />;
   if (pathname === '/admin/categories') return <AdminCategories />;
   if (pathname === '/admin/orders') return <AdminOrders />;
@@ -71,11 +67,11 @@ function AppRouter() {
   if (pathname === '/admin/settings') return <AdminSettings />;
   if (pathname === '/admin/audit-logs') return <AdminAuditLogs />;
 
-  // Maintenance mode gate for public storefront
-  if (bootstrap?.settings?.maintenanceMode) {
+  // Maintenance mode gate for public storefront (staff stay able to preview)
+  if (bootstrap?.settings?.maintenanceMode && !isStaff) {
     return (
       <div className="min-h-screen bg-[#F3EEE6] flex items-center justify-center p-6 text-center">
-        <div className="max-w-md bg-[#FFFFFF] border border-[#202020]/10 rounded-xl p-8 space-y-3">
+        <div className="max-w-md bg-[#FFFFFF] border border-[#202020]/10 rounded-xl p-8 space-y-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-[#B58B61]">
             Eimesly Packages
           </p>
@@ -85,6 +81,18 @@ function AppRouter() {
           <p className="text-sm text-[#202020]/70">
             Our packaging catalogue is currently being updated. Please check back shortly.
           </p>
+          <div className="pt-2 border-t border-[#202020]/10">
+            <a
+              href="/admin/login"
+              onClick={(e) => {
+                e.preventDefault();
+                navigate('/admin/login');
+              }}
+              className="text-xs font-medium text-[#202020]/55 hover:text-[#B58B61] transition-colors"
+            >
+              Admin Control
+            </a>
+          </div>
         </div>
       </div>
     );
@@ -93,7 +101,7 @@ function AppRouter() {
   let pageElement;
   if (pathname === '/') {
     pageElement = <HomePage />;
-  } else if (pathname === '/shop') {
+  } else if (pathname === '/shop' || pathname === '/cart' || pathname === '/checkout') {
     pageElement = <ShopPage />;
   } else if (pathname === '/categories') {
     pageElement = <CategoriesPage />;
@@ -103,13 +111,6 @@ function AppRouter() {
   } else if (pathname.startsWith('/products/')) {
     const slug = pathname.slice('/products/'.length);
     pageElement = <ProductDetailPage slug={slug} />;
-  } else if (pathname === '/cart') {
-    pageElement = <CartPage />;
-  } else if (pathname === '/checkout') {
-    pageElement = <CheckoutPage />;
-  } else if (pathname.startsWith('/order-confirmation/')) {
-    const orderNumber = pathname.slice('/order-confirmation/'.length);
-    pageElement = <OrderConfirmationPage orderNumber={orderNumber} />;
   } else if (pathname === '/request-quote') {
     pageElement = <RequestQuotePage />;
   } else if (pathname === '/wholesale') {
@@ -118,16 +119,6 @@ function AppRouter() {
     pageElement = <AboutPage />;
   } else if (pathname === '/contact') {
     pageElement = <ContactPage />;
-  } else if (pathname === '/login') {
-    pageElement = <CustomerAuthPage mode="login" />;
-  } else if (pathname === '/register') {
-    pageElement = <CustomerAuthPage mode="register" />;
-  } else if (pathname === '/reset-password') {
-    pageElement = <CustomerAuthPage mode="reset" />;
-  } else if (pathname === '/account') {
-    pageElement = <CustomerDashboardPage initialTab="overview" />;
-  } else if (pathname === '/account/orders') {
-    pageElement = <CustomerDashboardPage initialTab="orders" />;
   } else if (pathname === '/privacy-policy') {
     pageElement = <PrivacyPolicyPage />;
   } else if (pathname === '/terms-and-conditions') {
@@ -157,7 +148,6 @@ function AppRouter() {
       <Navbar />
       <main className="flex-1">{pageElement}</main>
       <Footer />
-      <CartDrawer />
     </div>
   );
 }

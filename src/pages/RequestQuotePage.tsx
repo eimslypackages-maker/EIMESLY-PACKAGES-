@@ -1,12 +1,18 @@
 import React, { useState } from 'react';
-import { CheckCircle2, Upload, X } from 'lucide-react';
+import { CheckCircle2, MessageCircle, Upload, X } from 'lucide-react';
 import { useApp, useDocumentMeta } from '../context/AppContext';
 import { apiFetch } from '../lib/api';
 import { uploadImageFile } from '../lib/upload';
+import {
+  buildWhatsAppUrl,
+  buildWholesaleQuoteMessage,
+  trackWhatsAppClick,
+} from '../lib/whatsapp';
 import type { Quotation } from '../shared/types';
 
 export function RequestQuotePage() {
-  const { path, user, navigate } = useApp();
+  const { path, user, navigate, bootstrap } = useApp();
+  const settings = bootstrap?.settings;
   const sp = new URLSearchParams(path.split('?')[1] || '');
 
   useDocumentMeta(
@@ -30,6 +36,18 @@ export function RequestQuotePage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [submittedQuote, setSubmittedQuote] = useState<Quotation | null>(null);
+
+  const whatsappQuoteUrl = buildWhatsAppUrl(
+    settings,
+    buildWholesaleQuoteMessage({
+      productName: productInterested || 'Wholesale Packaging Supply',
+      requiredQuantity: estimatedQuantity || '500',
+      businessName: companyName,
+      location: settings?.address || 'Kigali, Rwanda',
+      selectedSize: preferredSize,
+      template: settings?.whatsappWholesaleMessage,
+    })
+  );
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -79,16 +97,39 @@ export function RequestQuotePage() {
   return (
     <div className="bg-[#FFFFFF] min-h-[75vh]">
       <div className="bg-[#F3EEE6] border-b border-[#202020]/10">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <p className="text-xs font-semibold uppercase tracking-widest text-[#B58B61]">
-            Wholesale & Custom Supply
-          </p>
-          <h1 className="mt-2 text-3xl sm:text-4xl font-bold text-[#202020] tracking-tight">
-            Request a Packaging Quotation
-          </h1>
-          <p className="mt-2 text-base text-[#202020]/75 max-w-2xl">
-            Share the packaging items, estimated quantities, and sizes your business requires. Our team will prepare a formal quotation for your review.
-          </p>
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-[#B58B61]">
+              Wholesale & Custom Supply
+            </p>
+            <h1 className="mt-2 text-3xl sm:text-4xl font-bold text-[#202020] tracking-tight">
+              Request a Packaging Quotation
+            </h1>
+            <p className="mt-2 text-base text-[#202020]/75 max-w-2xl">
+              Share the packaging items, estimated quantities, and sizes your business requires, or send your wholesale quote request instantly on WhatsApp.
+            </p>
+          </div>
+          {whatsappQuoteUrl ? (
+            <a
+              href={whatsappQuoteUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() =>
+                trackWhatsAppClick({
+                  eventType: 'wholesale_quote',
+                  productId: productId ? Number(productId) : null,
+                  productName: productInterested || 'Wholesale Quotation',
+                  selectedSize: preferredSize,
+                  quantity: Math.max(1, Number(estimatedQuantity || 1)),
+                  sourcePage: 'request_quote',
+                })
+              }
+              className="px-5 py-3 text-xs font-semibold uppercase tracking-wide bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] inline-flex items-center gap-2 whitespace-nowrap shrink-0"
+            >
+              <MessageCircle className="w-4 h-4 text-[#B58B61]" />
+              Quote on WhatsApp
+            </a>
+          ) : null}
         </div>
       </div>
 

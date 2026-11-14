@@ -8,6 +8,11 @@ import {
 } from 'lucide-react';
 import { useApp, useDocumentMeta } from '../context/AppContext';
 import { apiFetch } from '../lib/api';
+import {
+  buildGeneralEnquiryMessage,
+  buildWhatsAppUrl,
+  trackWhatsAppClick,
+} from '../lib/whatsapp';
 import { SmartImage } from '../components/SmartImage';
 
 export function AboutPage() {
@@ -20,9 +25,14 @@ export function AboutPage() {
     'Learn about Eimesly Packages (EIMESLY LTD), supplying practical coffee cups, drinking straws, takeaway containers, and hospitality packaging in Kigali, Rwanda.'
   );
 
+  const whatsappUrl = buildWhatsAppUrl(
+    settings,
+    buildGeneralEnquiryMessage(settings)
+  );
+
   const paragraphs = (
     content?.aboutDescription ||
-    'Eimesly Packages is a packaging supply business focused on providing practical and quality packaging solutions for businesses and individuals. We specialize in coffee cups, clear plastic cups for iced drinks, paper and plastic drinking straws, takeaway containers, and other food-service packaging supplies.\n\nOur goal is to make packaging products accessible to cafés, restaurants, hotels, retailers, and other businesses through convenient ordering and reliable customer service.'
+    'Eimesly Packages is a packaging supply business focused on providing practical and quality packaging solutions for businesses and individuals. We specialize in coffee cups, clear plastic cups for iced drinks, paper and plastic drinking straws, takeaway containers, and other food-service packaging supplies.\n\nOur goal is to make packaging products accessible to cafés, restaurants, hotels, retailers, and other businesses through direct WhatsApp ordering and reliable customer service.'
   ).split('\n\n');
 
   return (
@@ -129,12 +139,29 @@ export function AboutPage() {
           >
             Explore Products
           </button>
+          {whatsappUrl ? (
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() =>
+                trackWhatsAppClick({
+                  eventType: 'whatsapp_contact',
+                  sourcePage: 'about_page',
+                })
+              }
+              className="px-5 py-2.5 text-sm font-semibold bg-[#B58B61] text-[#FFFFFF] rounded-md inline-flex items-center gap-2"
+            >
+              <MessageCircle className="w-4 h-4" />
+              Contact Us via WhatsApp
+            </a>
+          ) : null}
           <button
             type="button"
             onClick={() => navigate('/contact')}
             className="px-5 py-2.5 text-sm font-semibold border border-[#202020]/20 rounded-md"
           >
-            Contact Our Team
+            Contact Form
           </button>
         </div>
       </section>
@@ -148,7 +175,7 @@ export function ContactPage() {
 
   useDocumentMeta(
     'Contact Us | Eimesly Packages',
-    'Contact Eimesly Packages in Kigali, Rwanda for wholesale packaging enquiries, quotations, and retail order support.'
+    'Contact Eimesly Packages in Kigali, Rwanda for wholesale packaging enquiries, quotations, and WhatsApp order support.'
   );
 
   const [fullName, setFullName] = useState('');
@@ -160,7 +187,10 @@ export function ContactPage() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
 
-  const cleanWhatsapp = (settings?.whatsappNumber || '').replace(/[^0-9]/g, '');
+  const whatsappUrl = buildWhatsAppUrl(
+    settings,
+    buildGeneralEnquiryMessage(settings)
+  );
 
   // Build Google Maps embed URL ONLY when exact location coordinates or embed URL are configured in Admin Settings
   const resolvedMapUrl =
@@ -213,7 +243,7 @@ export function ContactPage() {
             Contact Eimesly Packages
           </h1>
           <p className="mt-2 text-base text-[#202020]/75 max-w-2xl">
-            Reach out for product specifications, bulk packaging quotations, or order follow-ups in Kigali and across Rwanda.
+            Reach out via WhatsApp or our enquiry form for product specifications, bulk packaging quotations, or delivery coordination in Kigali and across Rwanda.
           </p>
         </div>
       </div>
@@ -379,14 +409,20 @@ export function ContactPage() {
                 <MessageCircle className="w-5 h-5 text-[#B58B61] shrink-0 mt-0.5" />
                 <div>
                   <p className="font-semibold text-[#202020]">WhatsApp Business</p>
-                  {cleanWhatsapp ? (
+                  {whatsappUrl ? (
                     <a
-                      href={`https://wa.me/${cleanWhatsapp}`}
+                      href={whatsappUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-[#B58B61] font-medium hover:underline"
+                      onClick={() =>
+                        trackWhatsAppClick({
+                          eventType: 'whatsapp_contact',
+                          sourcePage: 'contact_page',
+                        })
+                      }
+                      className="text-[#B58B61] font-semibold hover:underline"
                     >
-                      Chat on WhatsApp ({settings?.whatsappNumber})
+                      Chat & Order on WhatsApp ({settings?.whatsappNumber})
                     </a>
                   ) : (
                     <p className="text-[#202020]/75">

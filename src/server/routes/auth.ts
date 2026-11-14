@@ -8,10 +8,56 @@ import {
   signSessionToken,
   verifyPassword,
 } from '../../lib/auth-crypto.ts';
-import { AuthRequest, requireAuth } from '../../middleware/auth.ts';
+import { AuthRequest, requireAuth, STAFF_ROLES } from '../../middleware/auth.ts';
 import { recordAuditLog } from '../audit.ts';
 
 export const authRouter = Router();
+
+const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
+const loginAttempts = new Map<string, number[]>();
+
+function getRateLimitKey(req: AuthRequest, email: string): string {
+  const ip =
+    (typeof req.headers['x-forwarded-for'] === 'string'
+      ? req.headers['x-forwarded-for'].split(',')[0]?.trim()
+      : req.ip) || 'unknown';
+  return `${ip}:${email}`;
+}
+
+function isRateLimited(key: string): { limited: boolean; retryAfterSec: number } {
+  const now = Date.now();
+  const recent = (loginAttempts.get(key) || []).filter(
+    (ts) => now - ts < LOGIN_RATE_WINDOW_MS
+  );
+  if (recent.length > 0) {
+    loginAttempts.set(key, recent);
+  } else {
+    loginAttempts.delete(key);
+  }
+  if (recent.length >= LOGIN_MAX_ATTEMPTS) {
+    const oldest = recent[0];
+    const retryAfterSec = Math.max(
+      1,
+      Math.ceil((LOGIN_RATE_WINDOW_MS - (now - oldest)) / 1000)
+    );
+    return { limited: true, retryAfterSec };
+  }
+  return { limited: false, retryAfterSec: 0 };
+}
+
+function recordFailedAttempt(key: string) {
+  const now = Date.now();
+  const recent = (loginAttempts.get(key) || []).filter(
+    (ts) => now - ts < LOGIN_RATE_WINDOW_MS
+  );
+  recent.push(now);
+  loginAttempts.set(key, recent);
+}
+
+function clearFailedAttempts(key: string) {
+  loginAttempts.delete(key);
+}
 
 authRouter.get('/setup-status', async (_req, res) => {
   try {
@@ -100,12 +146,26 @@ authRouter.post('/register', async (req, res) => {
   }
 });
 
-authRouter.post('/login', async (req, res) => {
+authRouter.post('/login', async (req: AuthRequest, res) => {
   try {
     const { email, password } = req.body || {};
     const cleanEmail = String(email || '').trim().toLowerCase();
     if (!cleanEmail || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const rateKey = getRateLimitKey(req, cleanEmail);
+    const rateCheck = isRateLimited(rateKey);
+    if (rateCheck.limited) {
+      await recordAuditLog({
+        action: 'rate_limited_login',
+        entityType: 'auth',
+        entityId: cleanEmail,
+        details: { retryAfterSec: rateCheck.retryAfterSec },
+      });
+      return res.status(429).json({
+        error: `Too many failed sign-in attempts. Please wait ${Math.ceil(rateCheck.retryAfterSec / 60)} minute(s) before trying again.`,
+      });
     }
 
     const rows = await db
@@ -115,25 +175,83 @@ authRouter.post('/login', async (req, res) => {
       .limit(1);
 
     const storedHash = rows[0]?.passwordHash;
-    if (rows.length === 0 || !storedHash) {
+    if (rows.length === 0) {
+      recordFailedAttempt(rateKey);
+      await recordAuditLog({
+        action: 'failed_login',
+        entityType: 'auth',
+        entityId: cleanEmail,
+        details: { reason: 'account_not_found' },
+      });
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    if (!storedHash) {
+      const isStaff = STAFF_ROLES.includes(
+        rows[0].role as (typeof STAFF_ROLES)[number]
+      );
+      if (isStaff) {
+        return res.status(400).json({
+          error:
+            'This admin account signs in with Google and does not have a password set yet. Use "Sign In with Google" on this page to access Admin Control.',
+        });
+      }
+      recordFailedAttempt(rateKey);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     const user = rows[0];
     if (!user.isActive) {
+      await recordAuditLog({
+        action: 'failed_login',
+        entityType: 'auth',
+        entityId: cleanEmail,
+        details: { reason: 'account_deactivated' },
+      });
       return res
         .status(403)
         .json({ error: 'This account has been deactivated' });
     }
 
     if (!verifyPassword(String(password), storedHash)) {
+      recordFailedAttempt(rateKey);
+      await recordAuditLog({
+        action: 'failed_login',
+        entityType: 'auth',
+        entityId: cleanEmail,
+        details: { reason: 'invalid_password' },
+      });
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    clearFailedAttempts(rateKey);
     const token = signSessionToken({
       uid: user.uid,
       userId: user.id,
       email: user.email,
+    });
+
+    await recordAuditLog({
+      actor: {
+        id: user.id,
+        uid: user.uid,
+        email: user.email,
+        fullName: user.fullName,
+        phone: user.phone,
+        businessName: user.businessName,
+        deliveryAddress: user.deliveryAddress,
+        district: user.district,
+        role: user.role as AuthRequest['appUser'] extends infer U
+          ? U extends { role: infer R }
+            ? R
+            : never
+          : never,
+        isActive: user.isActive,
+      },
+      action: 'login_success',
+      entityType: 'auth',
+      entityId: user.email,
+      details: { role: user.role },
     });
 
     res.json({
@@ -224,6 +342,36 @@ authRouter.post('/reset-password', async (req, res) => {
   } catch (err) {
     console.error('Reset password error:', err);
     res.status(500).json({ error: 'Unable to reset password' });
+  }
+});
+
+authRouter.post('/set-password', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const newPassword = String(req.body?.newPassword || '');
+    if (newPassword.length < 8) {
+      return res
+        .status(400)
+        .json({ error: 'Password must be at least 8 characters long' });
+    }
+    await db
+      .update(users)
+      .set({
+        passwordHash: hashPassword(newPassword),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, req.appUser!.id));
+
+    await recordAuditLog({
+      actor: req.appUser,
+      action: 'set_account_password',
+      entityType: 'user',
+      entityId: req.appUser!.id,
+    });
+
+    res.json({ message: 'Backup password saved. You can now sign in with email and password or Google.' });
+  } catch (err) {
+    console.error('Set password error:', err);
+    res.status(500).json({ error: 'Unable to save password' });
   }
 });
 

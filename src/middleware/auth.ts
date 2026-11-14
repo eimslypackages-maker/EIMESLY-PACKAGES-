@@ -7,6 +7,7 @@ import { users } from '../db/schema.ts';
 
 export type UserRole =
   | 'super_admin'
+  | 'business_owner'
   | 'business_manager'
   | 'sales_staff'
   | 'inventory_manager'
@@ -14,6 +15,7 @@ export type UserRole =
 
 export const STAFF_ROLES: UserRole[] = [
   'super_admin',
+  'business_owner',
   'business_manager',
   'sales_staff',
   'inventory_manager',

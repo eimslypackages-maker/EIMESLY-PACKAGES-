@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Copy, Trash2, Upload } from 'lucide-react';
+import { Copy, Edit2, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import { useApp, useDocumentMeta } from '../../context/AppContext';
 import { apiFetch } from '../../lib/api';
-import { uploadImageFile } from '../../lib/upload';
+import { fileToCompressedBase64, uploadImageFile } from '../../lib/upload';
 import { SmartImage } from '../../components/SmartImage';
 import { AdminLayout } from './AdminLayout';
 import type { WebsiteContent } from '../../shared/types';
@@ -268,14 +268,22 @@ interface MediaRow {
   filename: string;
   mimeType: string;
   altText: string;
+  folder?: string;
   url: string;
 }
+
+const MEDIA_FOLDERS = ['general', 'products', 'categories', 'banners', 'payments'];
 
 export function AdminMedia() {
   const [items, setItems] = useState<MediaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [folderFilter, setFolderFilter] = useState('all');
+  const [uploadFolder, setUploadFolder] = useState('products');
+  const [editing, setEditing] = useState<MediaRow | null>(null);
+  const [editAltText, setEditAltText] = useState('');
+  const [editFolder, setEditFolder] = useState('general');
 
   useDocumentMeta('Media Library | Eimesly Packages Admin');
 
@@ -299,7 +307,7 @@ export function AdminMedia() {
     setUploading(true);
     try {
       for (const f of files) {
-        await uploadImageFile(f);
+        await uploadImageFile(f, f.name, uploadFolder);
       }
       await load();
     } finally {
@@ -307,30 +315,95 @@ export function AdminMedia() {
     }
   };
 
+  const handleReplace = async (
+    id: number,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const { dataBase64, mimeType } = await fileToCompressedBase64(file);
+      await apiFetch(`/api/admin/media/${id}/replace`, {
+        method: 'POST',
+        body: JSON.stringify({
+          filename: file.name,
+          mimeType,
+          dataBase64,
+        }),
+      });
+      await load();
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleSaveMeta = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editing) return;
+    await apiFetch(`/api/admin/media/${editing.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ altText: editAltText, folder: editFolder }),
+    });
+    setEditing(null);
+    await load();
+  };
+
   const handleDelete = async (id: number) => {
     await apiFetch(`/api/admin/media/${id}`, { method: 'DELETE' });
     await load();
   };
 
+  const filtered = items.filter(
+    (m) => folderFilter === 'all' || (m.folder || 'general') === folderFilter
+  );
+
   return (
     <AdminLayout title="Media Management">
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <p className="text-sm text-[#202020]/70">
-            Upload and manage product photos, banners, and reference media.
-          </p>
-          <label className="px-4 py-2.5 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md inline-flex items-center gap-2 cursor-pointer">
-            <Upload className="w-4 h-4" />
-            <span>{uploading ? 'Uploading...' : 'Upload Images'}</span>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              disabled={uploading}
-              onChange={handleUpload}
-              className="hidden"
-            />
-          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            {['all', ...MEDIA_FOLDERS].map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFolderFilter(f)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md capitalize ${
+                  folderFilter === f
+                    ? 'bg-[#202020] text-[#FFFFFF]'
+                    : 'bg-[#FFFFFF] border border-[#202020]/15 text-[#202020]'
+                }`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={uploadFolder}
+              onChange={(e) => setUploadFolder(e.target.value)}
+              className="px-3 py-2 text-xs bg-[#FFFFFF] border border-[#202020]/20 rounded-md capitalize"
+            >
+              {MEDIA_FOLDERS.map((f) => (
+                <option key={f} value={f}>
+                  Folder: {f}
+                </option>
+              ))}
+            </select>
+            <label className="px-4 py-2 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md inline-flex items-center gap-2 cursor-pointer">
+              <Upload className="w-4 h-4" />
+              <span>{uploading ? 'Uploading...' : 'Upload Images'}</span>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                disabled={uploading}
+                onChange={handleUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
         </div>
 
         {loading ? (
@@ -339,13 +412,13 @@ export function AdminMedia() {
               <div key={i} className="h-44 bg-[#FFFFFF] rounded-lg animate-pulse" />
             ))}
           </div>
-        ) : items.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg p-12 text-center text-sm text-[#202020]/65">
-            No uploaded media assets yet. Upload product or banner images above.
+            No media assets found in this folder. Upload product or banner images above.
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-            {items.map((m) => (
+            {filtered.map((m) => (
               <div
                 key={m.id}
                 className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg overflow-hidden flex flex-col"
@@ -355,7 +428,10 @@ export function AdminMedia() {
                 </div>
                 <div className="p-3 space-y-2">
                   <p className="text-xs font-medium truncate">{m.filename}</p>
-                  <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] uppercase tracking-wider text-[#B58B61]">
+                    {m.folder || 'general'}
+                  </p>
+                  <div className="flex items-center justify-between gap-1">
                     <button
                       type="button"
                       onClick={() => {
@@ -366,15 +442,41 @@ export function AdminMedia() {
                       className="text-[11px] font-semibold text-[#B58B61] inline-flex items-center gap-1"
                     >
                       <Copy className="w-3 h-3" />
-                      {copiedId === m.id ? 'Copied' : 'Copy URL'}
+                      {copiedId === m.id ? 'Copied' : 'URL'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(m.id)}
-                      className="p-1 text-[#202020]/50 hover:text-red-600"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        title="Edit alt text & folder"
+                        onClick={() => {
+                          setEditing(m);
+                          setEditAltText(m.altText || '');
+                          setEditFolder(m.folder || 'general');
+                        }}
+                        className="p-1 text-[#202020]/60 hover:text-[#202020]"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <label
+                        title="Replace image file"
+                        className="p-1 text-[#202020]/60 hover:text-[#202020] cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => handleReplace(m.id, e)}
+                          className="hidden"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(m.id)}
+                        className="p-1 text-[#202020]/50 hover:text-red-600"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -382,6 +484,69 @@ export function AdminMedia() {
           </div>
         )}
       </div>
+
+      {editing && (
+        <div className="fixed inset-0 z-50 bg-[#202020]/60 flex items-center justify-center p-4">
+          <div className="bg-[#FFFFFF] rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-[#202020]/10">
+              <h3 className="text-base font-bold text-[#202020]">
+                Edit Media Details
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditing(null)}
+                className="p-1 text-[#202020]/60"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveMeta} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Alt Text (Accessibility & SEO)
+                </label>
+                <input
+                  type="text"
+                  value={editAltText}
+                  onChange={(e) => setEditAltText(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-[#202020]/20 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  Folder
+                </label>
+                <select
+                  value={editFolder}
+                  onChange={(e) => setEditFolder(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-[#202020]/20 rounded-md bg-[#FFFFFF] capitalize"
+                >
+                  {MEDIA_FOLDERS.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditing(null)}
+                  className="px-4 py-2 text-sm border border-[#202020]/20 rounded-md"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md"
+                >
+                  Save Details
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 }

@@ -1,5 +1,6 @@
+import crypto from 'node:crypto';
 import { Router } from 'express';
-import { asc, desc, eq, inArray } from 'drizzle-orm';
+import { asc, desc, eq, inArray, or } from 'drizzle-orm';
 import { db } from '../../db/index.ts';
 import {
   auditLogs,
@@ -13,11 +14,14 @@ import {
   quotations,
   siteSettings,
   users,
+  whatsappClicks,
 } from '../../db/schema.ts';
+import type { QuotationLineItemRecord } from '../../db/schema.ts';
 import {
   DEFAULT_WEBSITE_CONTENT,
   DEFAULT_WEBSITE_SETTINGS,
 } from '../../db/seed.ts';
+import { hashPassword } from '../../lib/auth-crypto.ts';
 import {
   AuthRequest,
   requireAuth,
@@ -49,6 +53,8 @@ adminRouter.get('/overview', async (_req, res) => {
       allItems,
       allEnquiries,
       allQuotations,
+      allUsers,
+      allClicks,
     ] = await Promise.all([
       db.select().from(products),
       db.select().from(categories),
@@ -56,12 +62,23 @@ adminRouter.get('/overview', async (_req, res) => {
       db.select().from(orderItems),
       db.select().from(enquiries).orderBy(desc(enquiries.createdAt)),
       db.select().from(quotations).orderBy(desc(quotations.createdAt)),
+      db.select({ id: users.id, role: users.role }).from(users),
+      db.select().from(whatsappClicks).orderBy(desc(whatsappClicks.createdAt)),
     ]);
 
     const totalProducts = allProducts.length;
     const activeProducts = allProducts.filter((p) => p.isActive).length;
     const totalCategories = allCategories.length;
     const totalOrders = allOrders.length;
+    const retailOrdersList = allOrders.filter(
+      (o) => o.orderType === 'retail' && o.orderStatus !== 'cancelled'
+    );
+    const wholesaleOrdersList = allOrders.filter(
+      (o) => o.orderType === 'wholesale' && o.orderStatus !== 'cancelled'
+    );
+    const retailOrders = retailOrdersList.length;
+    const wholesaleOrders = wholesaleOrdersList.length;
+
     const pendingOrders = allOrders.filter(
       (o) => !['completed', 'cancelled'].includes(o.orderStatus)
     ).length;
@@ -73,7 +90,21 @@ adminRouter.get('/overview', async (_req, res) => {
       ['new', 'under_review', 'quotation_sent'].includes(q.status)
     ).length;
 
-    const verifiedRevenue = allOrders
+    // Customer count: registered customers + manually recorded buyer phones/emails
+    const customerKeys = new Set<string>();
+    for (const u of allUsers) {
+      if (u.role === 'customer') customerKeys.add(`u-${u.id}`);
+    }
+    for (const o of allOrders) {
+      if (o.userId) {
+        customerKeys.add(`u-${o.userId}`);
+      } else {
+        customerKeys.add(`g-${o.email || o.phone || o.customerName}`);
+      }
+    }
+    const totalCustomers = customerKeys.size;
+
+    const confirmedPaidRevenue = allOrders
       .filter((o) => o.paymentStatus === 'paid' && o.orderStatus !== 'cancelled')
       .reduce((acc, o) => acc + o.totalAmount, 0);
 
@@ -81,7 +112,46 @@ adminRouter.get('/overview', async (_req, res) => {
       .filter((o) => o.orderStatus !== 'cancelled')
       .reduce((acc, o) => acc + o.totalAmount, 0);
 
-    // Best-selling products
+    const outstandingBalances = allOrders
+      .filter((o) => o.orderStatus !== 'cancelled' && o.paymentStatus !== 'paid')
+      .reduce((acc, o) => acc + Math.max(0, o.totalAmount), 0);
+
+    // WhatsApp Click / Enquiry Analytics (not confirmed sales)
+    const totalEnquiryClicks = allClicks.length;
+    const productOrderClicks = allClicks.filter(
+      (c) => c.eventType === 'product_order'
+    ).length;
+    const wholesaleQuoteClicks = allClicks.filter(
+      (c) => c.eventType === 'wholesale_quote'
+    ).length;
+    const whatsappContactClicks = allClicks.filter(
+      (c) => c.eventType === 'whatsapp_contact'
+    ).length;
+
+    const clicksByProductMap = new Map<
+      string,
+      { productName: string; sku: string; orderClicks: number; quoteClicks: number; totalClicks: number }
+    >();
+    for (const c of allClicks) {
+      if (!c.productName) continue;
+      const key = c.sku || c.productName;
+      const cur = clicksByProductMap.get(key) || {
+        productName: c.productName,
+        sku: c.sku,
+        orderClicks: 0,
+        quoteClicks: 0,
+        totalClicks: 0,
+      };
+      cur.totalClicks += 1;
+      if (c.eventType === 'product_order') cur.orderClicks += 1;
+      if (c.eventType === 'wholesale_quote') cur.quoteClicks += 1;
+      clicksByProductMap.set(key, cur);
+    }
+    const popularEnquiredProducts = Array.from(clicksByProductMap.values())
+      .sort((a, b) => b.totalClicks - a.totalClicks)
+      .slice(0, 6);
+
+    // Best-selling products (from manually recorded confirmed orders)
     const salesByProduct = new Map<
       string,
       { productName: string; sku: string; units: number; revenue: number }
@@ -100,7 +170,7 @@ adminRouter.get('/overview', async (_req, res) => {
     }
     const bestSellingProducts = Array.from(salesByProduct.values())
       .sort((a, b) => b.units - a.units)
-      .slice(0, 5);
+      .slice(0, 6);
 
     const lowStockProducts = allProducts.filter(
       (p) =>
@@ -108,13 +178,57 @@ adminRouter.get('/overview', async (_req, res) => {
         p.stockQuantity <= p.lowStockThreshold
     );
 
-    // Build last 7 days sales series
+    const inventoryStatus = {
+      inStock: allProducts.filter(
+        (p) =>
+          p.availabilityStatus === 'in_stock' &&
+          p.stockQuantity > p.lowStockThreshold
+      ).length,
+      lowStock: allProducts.filter(
+        (p) =>
+          p.availabilityStatus !== 'sample_listing' &&
+          p.stockQuantity > 0 &&
+          p.stockQuantity <= p.lowStockThreshold
+      ).length,
+      outOfStock: allProducts.filter(
+        (p) =>
+          p.availabilityStatus === 'out_of_stock' ||
+          (p.availabilityStatus !== 'sample_listing' &&
+            p.availabilityStatus !== 'made_to_order' &&
+            p.stockQuantity === 0)
+      ).length,
+      madeToOrder: allProducts.filter(
+        (p) => p.availabilityStatus === 'made_to_order'
+      ).length,
+      sampleListing: allProducts.filter(
+        (p) => p.availabilityStatus === 'sample_listing'
+      ).length,
+    };
+
+    // Last 7 days daily sales & WhatsApp click series
     const chartMap = new Map<string, { date: string; sales: number; orders: number }>();
+    const clickChartMap = new Map<
+      string,
+      {
+        date: string;
+        clicks: number;
+        productOrders: number;
+        wholesaleQuotes: number;
+        contacts: number;
+      }
+    >();
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const iso = d.toISOString().slice(0, 10);
       chartMap.set(iso, { date: iso, sales: 0, orders: 0 });
+      clickChartMap.set(iso, {
+        date: iso,
+        clicks: 0,
+        productOrders: 0,
+        wholesaleQuotes: 0,
+        contacts: 0,
+      });
     }
     for (const o of allOrders) {
       if (o.orderStatus === 'cancelled') continue;
@@ -122,9 +236,40 @@ adminRouter.get('/overview', async (_req, res) => {
       const bucket = chartMap.get(iso);
       if (bucket) {
         bucket.orders += 1;
-        if (o.paymentStatus === 'paid') {
-          bucket.sales += o.totalAmount;
-        }
+        bucket.sales += o.totalAmount;
+      }
+    }
+    for (const c of allClicks) {
+      const iso = new Date(c.createdAt).toISOString().slice(0, 10);
+      const bucket = clickChartMap.get(iso);
+      if (bucket) {
+        bucket.clicks += 1;
+        if (c.eventType === 'product_order') bucket.productOrders += 1;
+        else if (c.eventType === 'wholesale_quote') bucket.wholesaleQuotes += 1;
+        else bucket.contacts += 1;
+      }
+    }
+
+    // Last 6 months monthly sales series
+    const monthMap = new Map<string, { month: string; sales: number; orders: number }>();
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthMap.set(key, {
+        month: d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }),
+        sales: 0,
+        orders: 0,
+      });
+    }
+    for (const o of allOrders) {
+      if (o.orderStatus === 'cancelled') continue;
+      const d = new Date(o.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const bucket = monthMap.get(key);
+      if (bucket) {
+        bucket.orders += 1;
+        bucket.sales += o.totalAmount;
       }
     }
 
@@ -133,15 +278,37 @@ adminRouter.get('/overview', async (_req, res) => {
         totalProducts,
         activeProducts,
         totalCategories,
+        totalCustomers,
+        retailOrders,
+        wholesaleOrders,
         totalOrders,
         pendingOrders,
         completedOrders,
         totalEnquiries,
         pendingQuotations,
-        verifiedRevenue,
+        confirmedPaidRevenue,
         recordedSalesTotal,
+        outstandingBalances,
+        lowStockCount: lowStockProducts.length,
+        totalEnquiryClicks,
+        productOrderClicks,
+        wholesaleQuoteClicks,
+        whatsappContactClicks,
       },
       salesSeries: Array.from(chartMap.values()),
+      dailyClickSeries: Array.from(clickChartMap.values()),
+      monthlySales: Array.from(monthMap.values()),
+      wholesaleVsRetail: {
+        retailOrders,
+        retailRevenue: retailOrdersList.reduce((acc, o) => acc + o.totalAmount, 0),
+        wholesaleOrders,
+        wholesaleRevenue: wholesaleOrdersList.reduce(
+          (acc, o) => acc + o.totalAmount,
+          0
+        ),
+      },
+      popularEnquiredProducts,
+      inventoryStatus,
       recentOrders: allOrders.slice(0, 6),
       recentEnquiries: allEnquiries.slice(0, 6),
       bestSellingProducts,
@@ -178,14 +345,16 @@ adminRouter.get('/products', async (_req, res) => {
 
 adminRouter.post(
   '/products',
-  requireRole(['super_admin', 'business_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
   async (req: AuthRequest, res) => {
     try {
       const b = req.body || {};
       if (!b.name || !b.sku) {
         return res.status(400).json({ error: 'Product name and SKU are required' });
       }
-      const slug = b.slug ? slugify(b.slug) : `${slugify(b.name)}-${Date.now().toString().slice(-4)}`;
+      const slug = b.slug
+        ? slugify(b.slug)
+        : `${slugify(b.name)}-${Date.now().toString().slice(-4)}`;
       const [created] = await db
         .insert(products)
         .values({
@@ -208,6 +377,10 @@ adminRouter.post(
             b.wholesalePrice !== '' &&
             b.wholesalePrice !== undefined
               ? Math.max(0, Math.round(Number(b.wholesalePrice)))
+              : null,
+          costPrice:
+            b.costPrice !== null && b.costPrice !== '' && b.costPrice !== undefined
+              ? Math.max(0, Math.round(Number(b.costPrice)))
               : null,
           moq: Math.max(1, Number(b.moq || 1)),
           stockQuantity: Math.max(0, Number(b.stockQuantity || 0)),
@@ -243,11 +416,21 @@ adminRouter.post(
 
 adminRouter.put(
   '/products/:id',
-  requireRole(['super_admin', 'business_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
       const b = req.body || {};
+      const existingRows = await db
+        .select()
+        .from(products)
+        .where(eq(products.id, id))
+        .limit(1);
+      if (existingRows.length === 0) {
+        return res.status(404).json({ error: 'Product not found' });
+      }
+      const prevProd = existingRows[0];
+
       const [updated] = await db
         .update(products)
         .set({
@@ -283,6 +466,12 @@ adminRouter.put(
               : b.wholesalePrice !== undefined
                 ? Math.max(0, Math.round(Number(b.wholesalePrice)))
                 : undefined,
+          costPrice:
+            b.costPrice === null || b.costPrice === ''
+              ? null
+              : b.costPrice !== undefined
+                ? Math.max(0, Math.round(Number(b.costPrice)))
+                : undefined,
           moq: b.moq !== undefined ? Math.max(1, Number(b.moq)) : undefined,
           stockQuantity:
             b.stockQuantity !== undefined
@@ -306,14 +495,27 @@ adminRouter.put(
         .where(eq(products.id, id))
         .returning();
 
-      if (!updated) return res.status(404).json({ error: 'Product not found' });
+      const priceChanged =
+        prevProd.unitPrice !== updated.unitPrice ||
+        prevProd.wholesalePrice !== updated.wholesalePrice ||
+        prevProd.costPrice !== updated.costPrice;
 
       await recordAuditLog({
         actor: req.appUser,
-        action: 'update_product',
+        action: priceChanged ? 'update_product_price' : 'update_product',
         entityType: 'product',
         entityId: id,
-        details: { name: updated.name, sku: updated.sku },
+        details: {
+          name: updated.name,
+          sku: updated.sku,
+          ...(priceChanged
+            ? {
+                unitPrice: [prevProd.unitPrice, updated.unitPrice],
+                wholesalePrice: [prevProd.wholesalePrice, updated.wholesalePrice],
+                costPrice: [prevProd.costPrice, updated.costPrice],
+              }
+            : {}),
+        },
       });
 
       res.json(updated);
@@ -326,7 +528,7 @@ adminRouter.put(
 
 adminRouter.delete(
   '/products/:id',
-  requireRole(['super_admin', 'business_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
@@ -368,7 +570,7 @@ adminRouter.get('/categories', async (_req, res) => {
 
 adminRouter.post(
   '/categories',
-  requireRole(['super_admin', 'business_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
   async (req: AuthRequest, res) => {
     try {
       const b = req.body || {};
@@ -406,7 +608,7 @@ adminRouter.post(
 
 adminRouter.put(
   '/categories/:id',
-  requireRole(['super_admin', 'business_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
@@ -447,7 +649,7 @@ adminRouter.put(
 
 adminRouter.post(
   '/categories/reorder',
-  requireRole(['super_admin', 'business_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
   async (req: AuthRequest, res) => {
     try {
       const { orderedIds } = req.body || {};
@@ -476,7 +678,7 @@ adminRouter.post(
 
 adminRouter.delete(
   '/categories/:id',
-  requireRole(['super_admin', 'business_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
@@ -505,7 +707,7 @@ adminRouter.delete(
 // 4. Order Management
 adminRouter.get(
   '/orders',
-  requireRole(['super_admin', 'business_manager', 'sales_staff']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
   async (_req, res) => {
     try {
       const allOrders = await db
@@ -540,7 +742,7 @@ adminRouter.get(
 
 adminRouter.get(
   '/orders/export',
-  requireRole(['super_admin', 'business_manager', 'sales_staff']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
   async (_req, res) => {
     try {
       const allOrders = await db
@@ -599,9 +801,166 @@ adminRouter.get(
   }
 );
 
+adminRouter.post(
+  '/orders',
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
+  async (req: AuthRequest, res) => {
+    try {
+      const b = req.body || {};
+      const customerName = String(b.customerName || '').trim();
+      const phone = String(b.phone || '').trim();
+      if (!customerName || !phone) {
+        return res
+          .status(400)
+          .json({ error: 'Customer name and phone number are required' });
+      }
+      if (!Array.isArray(b.items) || b.items.length === 0) {
+        return res
+          .status(400)
+          .json({ error: 'At least one product line item is required' });
+      }
+
+      const settingsRows = await db
+        .select()
+        .from(siteSettings)
+        .where(eq(siteSettings.key, 'settings'))
+        .limit(1);
+      const prefix =
+        String(
+          (settingsRows[0]?.value as { orderNumberPrefix?: string } | undefined)
+            ?.orderNumberPrefix || 'EP'
+        ).trim() || 'EP';
+      const orderNumber = `${prefix}-WA-${Date.now().toString().slice(-6)}`;
+
+      const normalizedItems: Array<{
+        productId: number | null;
+        productName: string;
+        sku: string;
+        selectedSize: string;
+        quantity: number;
+        unitPrice: number;
+        lineTotal: number;
+      }> = [];
+
+      let subtotal = 0;
+      for (const raw of b.items) {
+        const qty = Math.max(1, Math.round(Number(raw.quantity || 1)));
+        const unitPrice = Math.max(0, Math.round(Number(raw.unitPrice || 0)));
+        const lineTotal = qty * unitPrice;
+        subtotal += lineTotal;
+        normalizedItems.push({
+          productId: raw.productId ? Number(raw.productId) : null,
+          productName: String(raw.productName || 'Packaging Product').trim(),
+          sku: String(raw.sku || '').trim(),
+          selectedSize: String(raw.selectedSize || '').trim(),
+          quantity: qty,
+          unitPrice,
+          lineTotal,
+        });
+      }
+
+      const deliveryFee = Math.max(0, Math.round(Number(b.deliveryFee || 0)));
+      const totalAmount = subtotal + deliveryFee;
+
+      const [created] = await db
+        .insert(orders)
+        .values({
+          orderNumber,
+          userId: null,
+          orderType: b.orderType === 'wholesale' ? 'wholesale' : 'retail',
+          customerName,
+          phone,
+          email: String(b.email || '').trim(),
+          businessName: String(b.businessName || '').trim(),
+          deliveryAddress: String(b.deliveryAddress || 'Confirmed via WhatsApp').trim(),
+          district: String(b.district || 'Kigali').trim(),
+          orderNotes: String(b.orderNotes || 'Manually recorded WhatsApp order').trim(),
+          internalNotes: String(b.internalNotes || '').trim(),
+          paymentMethod: String(b.paymentMethod || 'whatsapp_direct'),
+          paymentStatus: String(b.paymentStatus || 'unpaid'),
+          paymentReference: String(b.paymentReference || '').trim(),
+          orderStatus: String(b.orderStatus || 'confirmed'),
+          subtotal,
+          deliveryFee,
+          totalAmount,
+          hasUnpricedItems: totalAmount === 0,
+        })
+        .returning();
+
+      const insertedItems = await db
+        .insert(orderItems)
+        .values(
+          normalizedItems.map((it) => ({
+            orderId: created.id,
+            ...it,
+          }))
+        )
+        .returning();
+
+      if (b.deductStock !== false) {
+        const productIds = normalizedItems
+          .map((it) => it.productId)
+          .filter((id): id is number => id !== null && id > 0);
+        if (productIds.length > 0) {
+          const prodRows = await db
+            .select()
+            .from(products)
+            .where(inArray(products.id, productIds));
+          const prodMap = new Map(prodRows.map((p) => [p.id, p]));
+          for (const item of normalizedItems) {
+            if (!item.productId) continue;
+            const prod = prodMap.get(item.productId);
+            if (prod && prod.stockQuantity > 0) {
+              const nextStock = Math.max(0, prod.stockQuantity - item.quantity);
+              await db
+                .update(products)
+                .set({
+                  stockQuantity: nextStock,
+                  availabilityStatus:
+                    nextStock === 0 && prod.availabilityStatus === 'in_stock'
+                      ? 'out_of_stock'
+                      : prod.availabilityStatus,
+                  updatedAt: new Date(),
+                })
+                .where(eq(products.id, prod.id));
+
+              await db.insert(inventoryMovements).values({
+                productId: prod.id,
+                movementType: 'order_deduction',
+                quantityChange: -Math.min(prod.stockQuantity, item.quantity),
+                previousStock: prod.stockQuantity,
+                newStock: nextStock,
+                reason: `WhatsApp Order ${orderNumber}`,
+                performedBy: req.appUser!.id,
+              });
+            }
+          }
+        }
+      }
+
+      await recordAuditLog({
+        actor: req.appUser,
+        action: 'record_whatsapp_order',
+        entityType: 'order',
+        entityId: created.orderNumber,
+        details: {
+          customerName: created.customerName,
+          orderType: created.orderType,
+          totalAmount: created.totalAmount,
+        },
+      });
+
+      res.status(201).json({ ...created, items: insertedItems });
+    } catch (err) {
+      console.error('Record WhatsApp order failed:', err);
+      res.status(400).json({ error: 'Failed to record WhatsApp order' });
+    }
+  }
+);
+
 adminRouter.put(
   '/orders/:id',
-  requireRole(['super_admin', 'business_manager', 'sales_staff']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
@@ -663,7 +1022,7 @@ adminRouter.put(
 // 5. Quotation Management
 adminRouter.get(
   '/quotations',
-  requireRole(['super_admin', 'business_manager', 'sales_staff']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
   async (_req, res) => {
     try {
       const rows = await db
@@ -678,13 +1037,140 @@ adminRouter.get(
   }
 );
 
+adminRouter.post(
+  '/quotations',
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
+  async (req: AuthRequest, res) => {
+    try {
+      const b = req.body || {};
+      if (!b.customerName || !b.phone) {
+        return res
+          .status(400)
+          .json({ error: 'Customer name and phone number are required' });
+      }
+      const rawItems: QuotationLineItemRecord[] = Array.isArray(b.items)
+        ? b.items.map((it: Partial<QuotationLineItemRecord>) => {
+            const quantity = Math.max(1, Math.round(Number(it.quantity || 1)));
+            const unitPrice = Math.max(0, Math.round(Number(it.unitPrice || 0)));
+            return {
+              productName: String(it.productName || '').trim() || 'Packaging Item',
+              sku: String(it.sku || '').trim(),
+              size: String(it.size || '').trim(),
+              quantity,
+              unitPrice,
+              lineTotal: quantity * unitPrice,
+            };
+          })
+        : [];
+
+      const discountAmount = Math.max(0, Math.round(Number(b.discountAmount || 0)));
+      const itemsSubtotal = rawItems.reduce((s, it) => s + it.lineTotal, 0);
+      const proposedUnitPrice =
+        b.proposedUnitPrice !== null &&
+        b.proposedUnitPrice !== '' &&
+        b.proposedUnitPrice !== undefined
+          ? Math.max(0, Math.round(Number(b.proposedUnitPrice)))
+          : rawItems[0]?.unitPrice ?? null;
+      const proposedQuantity =
+        b.proposedQuantity !== null &&
+        b.proposedQuantity !== '' &&
+        b.proposedQuantity !== undefined
+          ? Math.max(1, Math.round(Number(b.proposedQuantity)))
+          : rawItems.reduce((s, it) => s + it.quantity, 0) ||
+            Math.max(1, Math.round(Number(b.estimatedQuantity || 1)));
+
+      const computedTotal =
+        rawItems.length > 0
+          ? Math.max(0, itemsSubtotal - discountAmount)
+          : proposedUnitPrice !== null && proposedQuantity !== null
+            ? Math.max(0, proposedUnitPrice * proposedQuantity - discountAmount)
+            : null;
+
+      const quoteNumber = `EPQ-${Date.now().toString().slice(-6)}-${Math.floor(
+        100 + Math.random() * 900
+      )}`;
+
+      const productInterested =
+        String(b.productInterested || '').trim() ||
+        rawItems.map((it) => `${it.productName} (${it.quantity})`).join(', ') ||
+        'Custom Wholesale Quotation';
+
+      const [created] = await db
+        .insert(quotations)
+        .values({
+          quoteNumber,
+          customerName: String(b.customerName).trim(),
+          companyName: String(b.companyName || '').trim(),
+          phone: String(b.phone).trim(),
+          email: String(b.email || '').trim(),
+          productInterested,
+          estimatedQuantity: Math.max(1, Number(b.estimatedQuantity || proposedQuantity || 1)),
+          preferredSize: String(b.preferredSize || rawItems[0]?.size || '').trim(),
+          additionalRequirements: String(b.additionalRequirements || '').trim(),
+          status: String(b.status || 'quotation_sent'),
+          items: rawItems,
+          discountAmount,
+          proposedUnitPrice,
+          proposedQuantity,
+          proposedTotal:
+            b.proposedTotal !== null &&
+            b.proposedTotal !== '' &&
+            b.proposedTotal !== undefined
+              ? Math.max(0, Math.round(Number(b.proposedTotal)))
+              : computedTotal,
+          adminNotes: String(b.adminNotes || '').trim(),
+          validUntil: String(b.validUntil || '').trim(),
+        })
+        .returning();
+
+      await recordAuditLog({
+        actor: req.appUser,
+        action: 'create_quotation',
+        entityType: 'quotation',
+        entityId: created.quoteNumber,
+        details: {
+          customerName: created.customerName,
+          proposedTotal: created.proposedTotal,
+        },
+      });
+
+      res.status(201).json(created);
+    } catch (err) {
+      console.error('Create quotation failed:', err);
+      res.status(400).json({ error: 'Failed to create quotation' });
+    }
+  }
+);
+
 adminRouter.put(
   '/quotations/:id',
-  requireRole(['super_admin', 'business_manager', 'sales_staff']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
       const b = req.body || {};
+
+      const hasItems = Array.isArray(b.items);
+      const rawItems: QuotationLineItemRecord[] | undefined = hasItems
+        ? b.items.map((it: Partial<QuotationLineItemRecord>) => {
+            const quantity = Math.max(1, Math.round(Number(it.quantity || 1)));
+            const unitPrice = Math.max(0, Math.round(Number(it.unitPrice || 0)));
+            return {
+              productName: String(it.productName || '').trim() || 'Packaging Item',
+              sku: String(it.sku || '').trim(),
+              size: String(it.size || '').trim(),
+              quantity,
+              unitPrice,
+              lineTotal: quantity * unitPrice,
+            };
+          })
+        : undefined;
+
+      const discountAmount =
+        b.discountAmount !== undefined
+          ? Math.max(0, Math.round(Number(b.discountAmount || 0)))
+          : undefined;
+
       const proposedUnitPrice =
         b.proposedUnitPrice !== null &&
         b.proposedUnitPrice !== '' &&
@@ -697,25 +1183,39 @@ adminRouter.put(
         b.proposedQuantity !== undefined
           ? Math.max(1, Math.round(Number(b.proposedQuantity)))
           : null;
-      const proposedTotal =
+
+      let proposedTotal: number | null | undefined;
+      if (rawItems && rawItems.length > 0) {
+        const sub = rawItems.reduce((s, it) => s + it.lineTotal, 0);
+        proposedTotal = Math.max(0, sub - (discountAmount ?? 0));
+      } else if (
         b.proposedTotal !== null &&
         b.proposedTotal !== '' &&
         b.proposedTotal !== undefined
-          ? Math.max(0, Math.round(Number(b.proposedTotal)))
-          : proposedUnitPrice !== null && proposedQuantity !== null
-            ? proposedUnitPrice * proposedQuantity
-            : null;
+      ) {
+        proposedTotal = Math.max(0, Math.round(Number(b.proposedTotal)));
+      } else if (proposedUnitPrice !== null && proposedQuantity !== null) {
+        proposedTotal = Math.max(
+          0,
+          proposedUnitPrice * proposedQuantity - (discountAmount ?? 0)
+        );
+      } else {
+        proposedTotal = null;
+      }
 
       const [updated] = await db
         .update(quotations)
         .set({
           status: b.status !== undefined ? String(b.status) : undefined,
+          items: rawItems !== undefined ? rawItems : undefined,
+          discountAmount: discountAmount !== undefined ? discountAmount : undefined,
           proposedUnitPrice:
             b.proposedUnitPrice !== undefined ? proposedUnitPrice : undefined,
           proposedQuantity:
             b.proposedQuantity !== undefined ? proposedQuantity : undefined,
           proposedTotal:
             b.proposedTotal !== undefined ||
+            hasItems ||
             (proposedUnitPrice !== null && proposedQuantity !== null)
               ? proposedTotal
               : undefined,
@@ -748,7 +1248,7 @@ adminRouter.put(
 
 adminRouter.post(
   '/quotations/:id/convert',
-  requireRole(['super_admin', 'business_manager', 'sales_staff']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
@@ -767,9 +1267,28 @@ adminRouter.post(
           .json({ error: 'This quotation has already been converted to an order' });
       }
 
-      const qty = quote.proposedQuantity ?? quote.estimatedQuantity;
-      const unitPrice = quote.proposedUnitPrice ?? 0;
-      const total = quote.proposedTotal ?? unitPrice * qty;
+      const lineItems = Array.isArray(quote.items) && quote.items.length > 0
+        ? quote.items
+        : [
+            {
+              productName: quote.productInterested,
+              sku: '',
+              size: quote.preferredSize,
+              quantity: quote.proposedQuantity ?? quote.estimatedQuantity,
+              unitPrice: quote.proposedUnitPrice ?? 0,
+              lineTotal:
+                quote.proposedTotal ??
+                (quote.proposedUnitPrice ?? 0) *
+                  (quote.proposedQuantity ?? quote.estimatedQuantity),
+            },
+          ];
+
+      const rawSubtotal = lineItems.reduce((s, it) => s + it.lineTotal, 0);
+      const total =
+        quote.proposedTotal !== null
+          ? quote.proposedTotal
+          : Math.max(0, rawSubtotal - (quote.discountAmount || 0));
+
       const orderNumber = `EP-Q-${Date.now().toString().slice(-6)}`;
 
       const [newOrder] = await db
@@ -784,27 +1303,29 @@ adminRouter.post(
           businessName: quote.companyName,
           deliveryAddress: 'To be confirmed with customer',
           district: 'Kigali',
-          orderNotes: `Converted from quotation ${quote.quoteNumber}. ${quote.additionalRequirements}`,
+          orderNotes: `Converted from quotation ${quote.quoteNumber}.${quote.discountAmount ? ` Discount applied: RWF ${quote.discountAmount}.` : ''} ${quote.additionalRequirements}`.trim(),
           paymentMethod: 'arrange_direct',
           paymentStatus: 'unpaid',
           orderStatus: 'confirmed',
-          subtotal: total,
+          subtotal: rawSubtotal,
           deliveryFee: 0,
           totalAmount: total,
-          hasUnpricedItems: unitPrice === 0,
+          hasUnpricedItems: total === 0,
         })
         .returning();
 
-      await db.insert(orderItems).values({
-        orderId: newOrder.id,
-        productId: quote.productId,
-        productName: quote.productInterested,
-        sku: '',
-        selectedSize: quote.preferredSize,
-        quantity: qty,
-        unitPrice,
-        lineTotal: total,
-      });
+      await db.insert(orderItems).values(
+        lineItems.map((it) => ({
+          orderId: newOrder.id,
+          productId: quote.items?.length ? null : quote.productId,
+          productName: it.productName,
+          sku: it.sku || '',
+          selectedSize: it.size || '',
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          lineTotal: it.lineTotal,
+        }))
+      );
 
       const [updatedQuote] = await db
         .update(quotations)
@@ -832,10 +1353,12 @@ adminRouter.post(
   }
 );
 
+
+
 // 6. Enquiries Management
 adminRouter.get(
   '/enquiries',
-  requireRole(['super_admin', 'business_manager', 'sales_staff']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
   async (_req, res) => {
     try {
       const rows = await db
@@ -852,7 +1375,7 @@ adminRouter.get(
 
 adminRouter.put(
   '/enquiries/:id',
-  requireRole(['super_admin', 'business_manager', 'sales_staff']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
@@ -887,23 +1410,28 @@ adminRouter.put(
 // 7. Customer Management
 adminRouter.get(
   '/customers',
-  requireRole(['super_admin', 'business_manager', 'sales_staff']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
   async (_req, res) => {
     try {
-      const [allUsers, allOrders] = await Promise.all([
+      const [allUsers, allOrders, allQuotes] = await Promise.all([
         db.select().from(users).orderBy(desc(users.createdAt)),
         db.select().from(orders).orderBy(desc(orders.createdAt)),
+        db.select().from(quotations),
       ]);
 
       const customerMap = new Map<
         string,
         {
+          id: number | null;
           key: string;
           name: string;
           phone: string;
           email: string;
           businessName: string;
+          deliveryAddress: string;
+          district: string;
           orderCount: number;
+          quoteCount: number;
           totalSpent: number;
           lastOrderDate: string | null;
           isRegistered: boolean;
@@ -914,12 +1442,16 @@ adminRouter.get(
         if (u.role !== 'customer') continue;
         const key = u.email || u.phone || `u-${u.id}`;
         customerMap.set(key, {
+          id: u.id,
           key,
           name: u.fullName || u.email,
           phone: u.phone,
           email: u.email,
           businessName: u.businessName,
+          deliveryAddress: u.deliveryAddress,
+          district: u.district,
           orderCount: 0,
+          quoteCount: 0,
           totalSpent: 0,
           lastOrderDate: null,
           isRegistered: true,
@@ -929,12 +1461,16 @@ adminRouter.get(
       for (const o of allOrders) {
         const key = o.email || o.phone || o.customerName;
         const cur = customerMap.get(key) || {
+          id: o.userId ?? null,
           key,
           name: o.customerName,
           phone: o.phone,
           email: o.email,
           businessName: o.businessName,
+          deliveryAddress: o.deliveryAddress,
+          district: o.district,
           orderCount: 0,
+          quoteCount: 0,
           totalSpent: 0,
           lastOrderDate: null,
           isRegistered: false,
@@ -949,6 +1485,14 @@ adminRouter.get(
         customerMap.set(key, cur);
       }
 
+      for (const q of allQuotes) {
+        const key = q.email || q.phone || q.customerName;
+        const cur = customerMap.get(key);
+        if (cur) {
+          cur.quoteCount += 1;
+        }
+      }
+
       res.json(Array.from(customerMap.values()));
     } catch (err) {
       console.error('Admin customers failed:', err);
@@ -957,10 +1501,124 @@ adminRouter.get(
   }
 );
 
+adminRouter.put(
+  '/customers/:id',
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
+  async (req: AuthRequest, res) => {
+    try {
+      const id = Number(req.params.id);
+      const rows = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Customer account not found' });
+      }
+      if (rows[0].role !== 'customer') {
+        return res
+          .status(403)
+          .json({ error: 'Use Users & Roles to edit staff accounts' });
+      }
+      const b = req.body || {};
+      const [updated] = await db
+        .update(users)
+        .set({
+          fullName:
+            b.fullName !== undefined ? String(b.fullName).trim() : undefined,
+          phone: b.phone !== undefined ? String(b.phone).trim() : undefined,
+          businessName:
+            b.businessName !== undefined
+              ? String(b.businessName).trim()
+              : undefined,
+          deliveryAddress:
+            b.deliveryAddress !== undefined
+              ? String(b.deliveryAddress).trim()
+              : undefined,
+          district:
+            b.district !== undefined ? String(b.district).trim() : undefined,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, id))
+        .returning({
+          id: users.id,
+          email: users.email,
+          fullName: users.fullName,
+          phone: users.phone,
+          businessName: users.businessName,
+          deliveryAddress: users.deliveryAddress,
+          district: users.district,
+        });
+
+      await recordAuditLog({
+        actor: req.appUser,
+        action: 'update_customer',
+        entityType: 'customer',
+        entityId: id,
+        details: { fullName: updated.fullName, phone: updated.phone },
+      });
+
+      res.json(updated);
+    } catch (err) {
+      console.error('Customer update failed:', err);
+      res.status(400).json({ error: 'Failed to update customer' });
+    }
+  }
+);
+
+adminRouter.get(
+  '/customers/history',
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'sales_staff']),
+  async (req, res) => {
+    try {
+      const userId = req.query.userId ? Number(req.query.userId) : null;
+      const email = String(req.query.email || '').trim().toLowerCase();
+      const phone = String(req.query.phone || '').trim();
+
+      const orderConds = [];
+      const quoteConds = [];
+      if (userId) {
+        orderConds.push(eq(orders.userId, userId));
+        quoteConds.push(eq(quotations.userId, userId));
+      }
+      if (email) {
+        orderConds.push(eq(orders.email, email));
+        quoteConds.push(eq(quotations.email, email));
+      }
+      if (phone) {
+        orderConds.push(eq(orders.phone, phone));
+        quoteConds.push(eq(quotations.phone, phone));
+      }
+
+      const [custOrders, custQuotes] = await Promise.all([
+        orderConds.length
+          ? db
+              .select()
+              .from(orders)
+              .where(or(...orderConds))
+              .orderBy(desc(orders.createdAt))
+          : Promise.resolve([]),
+        quoteConds.length
+          ? db
+              .select()
+              .from(quotations)
+              .where(or(...quoteConds))
+              .orderBy(desc(quotations.createdAt))
+          : Promise.resolve([]),
+      ]);
+
+      res.json({ orders: custOrders, quotations: custQuotes });
+    } catch (err) {
+      console.error('Customer history failed:', err);
+      res.status(500).json({ error: 'Failed to load customer history' });
+    }
+  }
+);
+
 // 8. Inventory Management
 adminRouter.get(
   '/inventory',
-  requireRole(['super_admin', 'business_manager', 'inventory_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'inventory_manager']),
   async (_req, res) => {
     try {
       const [allProds, movements] = await Promise.all([
@@ -989,7 +1647,7 @@ adminRouter.get(
 
 adminRouter.post(
   '/inventory/adjust',
-  requireRole(['super_admin', 'business_manager', 'inventory_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'inventory_manager']),
   async (req: AuthRequest, res) => {
     try {
       const { productId, movementType, quantity, reason } = req.body || {};
@@ -1073,7 +1731,7 @@ adminRouter.post(
 // 9. Reports & Analytics
 adminRouter.get(
   '/reports',
-  requireRole(['super_admin', 'business_manager', 'inventory_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager', 'inventory_manager']),
   async (req, res) => {
     try {
       const fromStr = req.query.from ? String(req.query.from) : '';
@@ -1081,17 +1739,32 @@ adminRouter.get(
       const fromDate = fromStr ? new Date(fromStr) : null;
       const toDate = toStr ? new Date(`${toStr}T23:59:59.999Z`) : null;
 
-      const [allOrders, allItems, allProds, allCats, allQuotes] =
+      const [allOrders, allItems, allProds, allCats, allQuotes, allClicks] =
         await Promise.all([
           db.select().from(orders).orderBy(desc(orders.createdAt)),
           db.select().from(orderItems),
           db.select().from(products),
           db.select().from(categories),
-          db.select().from(quotations),
+          db.select().from(quotations).orderBy(desc(quotations.createdAt)),
+          db.select().from(whatsappClicks).orderBy(desc(whatsappClicks.createdAt)),
         ]);
 
       const filteredOrders = allOrders.filter((o) => {
         const d = new Date(o.createdAt);
+        if (fromDate && d < fromDate) return false;
+        if (toDate && d > toDate) return false;
+        return true;
+      });
+
+      const filteredQuotes = allQuotes.filter((q) => {
+        const d = new Date(q.createdAt);
+        if (fromDate && d < fromDate) return false;
+        if (toDate && d > toDate) return false;
+        return true;
+      });
+
+      const filteredClicks = allClicks.filter((c) => {
+        const d = new Date(c.createdAt);
         if (fromDate && d < fromDate) return false;
         if (toDate && d > toDate) return false;
         return true;
@@ -1150,11 +1823,116 @@ adminRouter.get(
         categorySalesMap.set(catName, cEntry);
       }
 
+      // WhatsApp Enquiry Clicks Analytics
+      const clickProductMap = new Map<
+        string,
+        {
+          productName: string;
+          sku: string;
+          orderClicks: number;
+          quoteClicks: number;
+          totalClicks: number;
+          totalQuantityRequested: number;
+        }
+      >();
+      for (const c of filteredClicks) {
+        if (!c.productName) continue;
+        const key = c.sku || c.productName;
+        const entry = clickProductMap.get(key) || {
+          productName: c.productName,
+          sku: c.sku,
+          orderClicks: 0,
+          quoteClicks: 0,
+          totalClicks: 0,
+          totalQuantityRequested: 0,
+        };
+        entry.totalClicks += 1;
+        entry.totalQuantityRequested += c.quantity || 1;
+        if (c.eventType === 'product_order') entry.orderClicks += 1;
+        if (c.eventType === 'wholesale_quote') entry.quoteClicks += 1;
+        clickProductMap.set(key, entry);
+      }
+
+      // Monthly series (last 6 months)
+      const monthMap = new Map<
+        string,
+        { month: string; orders: number; retail: number; wholesale: number }
+      >();
+      const now = new Date();
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        monthMap.set(key, {
+          month: d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }),
+          orders: 0,
+          retail: 0,
+          wholesale: 0,
+        });
+      }
+      for (const o of activeOrders) {
+        const d = new Date(o.createdAt);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const bucket = monthMap.get(key);
+        if (bucket) {
+          bucket.orders += 1;
+          if (o.orderType === 'wholesale') bucket.wholesale += o.totalAmount;
+          else bucket.retail += o.totalAmount;
+        }
+      }
+
+      // Inventory valuation report
+      const inventoryReport = allProds.map((p) => {
+        const unitCost = p.costPrice ?? p.unitPrice ?? 0;
+        return {
+          id: p.id,
+          name: p.name,
+          sku: p.sku,
+          category:
+            (p.categoryId ? catMap.get(p.categoryId)?.name : null) ||
+            'Uncategorized',
+          stockQuantity: p.stockQuantity,
+          lowStockThreshold: p.lowStockThreshold,
+          costPrice: p.costPrice,
+          unitPrice: p.unitPrice,
+          valuation: p.stockQuantity * unitCost,
+          availabilityStatus: p.availabilityStatus,
+        };
+      });
+      const inventoryValuation = inventoryReport.reduce(
+        (sum, r) => sum + r.valuation,
+        0
+      );
+
+      // Customer report
+      const custAgg = new Map<
+        string,
+        {
+          customerName: string;
+          businessName: string;
+          phone: string;
+          orderCount: number;
+          totalSpend: number;
+        }
+      >();
+      for (const o of activeOrders) {
+        const key = o.email || o.phone || o.customerName;
+        const entry = custAgg.get(key) || {
+          customerName: o.customerName,
+          businessName: o.businessName,
+          phone: o.phone,
+          orderCount: 0,
+          totalSpend: 0,
+        };
+        entry.orderCount += 1;
+        entry.totalSpend += o.totalAmount;
+        custAgg.set(key, entry);
+      }
+
       res.json({
         summary: {
           totalOrders: activeOrders.length,
           paidOrdersCount: paidOrders.length,
-          verifiedRevenue: paidOrders.reduce((s, o) => s + o.totalAmount, 0),
+          confirmedPaidRevenue: paidOrders.reduce((s, o) => s + o.totalAmount, 0),
           recordedSales: activeOrders.reduce((s, o) => s + o.totalAmount, 0),
           outstandingAmount: outstandingOrders.reduce(
             (s, o) => s + o.totalAmount,
@@ -1167,8 +1945,8 @@ adminRouter.get(
           ),
           retailCount: retailOrders.length,
           retailValue: retailOrders.reduce((s, o) => s + o.totalAmount, 0),
-          totalQuotations: allQuotes.length,
-          acceptedQuotations: allQuotes.filter((q) =>
+          totalQuotations: filteredQuotes.length,
+          acceptedQuotations: filteredQuotes.filter((q) =>
             ['accepted', 'completed'].includes(q.status)
           ).length,
           lowStockCount: allProds.filter(
@@ -1181,6 +1959,17 @@ adminRouter.get(
               p.availabilityStatus === 'out_of_stock' ||
               (p.availabilityStatus !== 'sample_listing' && p.stockQuantity === 0)
           ).length,
+          inventoryValuation,
+          totalWhatsappClicks: filteredClicks.length,
+          productOrderClicks: filteredClicks.filter(
+            (c) => c.eventType === 'product_order'
+          ).length,
+          wholesaleQuoteClicks: filteredClicks.filter(
+            (c) => c.eventType === 'wholesale_quote'
+          ).length,
+          whatsappContactClicks: filteredClicks.filter(
+            (c) => c.eventType === 'whatsapp_contact'
+          ).length,
         },
         productSales: Array.from(productSalesMap.values()).sort(
           (a, b) => b.revenue - a.revenue
@@ -1188,7 +1977,17 @@ adminRouter.get(
         categorySales: Array.from(categorySalesMap.values()).sort(
           (a, b) => b.revenue - a.revenue
         ),
+        whatsappTopProducts: Array.from(clickProductMap.values()).sort(
+          (a, b) => b.totalClicks - a.totalClicks
+        ),
+        whatsappRecentClicks: filteredClicks.slice(0, 50),
         outstandingOrders,
+        monthlySeries: Array.from(monthMap.values()),
+        inventoryReport,
+        quotationsReport: filteredQuotes,
+        customersSummary: Array.from(custAgg.values()).sort(
+          (a, b) => b.totalSpend - a.totalSpend
+        ),
       });
     } catch (err) {
       console.error('Reports failed:', err);
@@ -1206,6 +2005,7 @@ adminRouter.get('/media', async (_req, res) => {
         filename: mediaAssets.filename,
         mimeType: mediaAssets.mimeType,
         altText: mediaAssets.altText,
+        folder: mediaAssets.folder,
         createdAt: mediaAssets.createdAt,
       })
       .from(mediaAssets)
@@ -1222,9 +2022,86 @@ adminRouter.get('/media', async (_req, res) => {
   }
 });
 
+adminRouter.put(
+  '/media/:id',
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
+  async (req: AuthRequest, res) => {
+    try {
+      const id = Number(req.params.id);
+      const b = req.body || {};
+      const [updated] = await db
+        .update(mediaAssets)
+        .set({
+          altText:
+            b.altText !== undefined ? String(b.altText).slice(0, 200) : undefined,
+          folder:
+            b.folder !== undefined ? String(b.folder).slice(0, 60) : undefined,
+        })
+        .where(eq(mediaAssets.id, id))
+        .returning({
+          id: mediaAssets.id,
+          filename: mediaAssets.filename,
+          mimeType: mediaAssets.mimeType,
+          altText: mediaAssets.altText,
+          folder: mediaAssets.folder,
+          createdAt: mediaAssets.createdAt,
+        });
+      if (!updated) return res.status(404).json({ error: 'Media asset not found' });
+      res.json({ ...updated, url: `/api/media/${updated.id}` });
+    } catch (err) {
+      console.error('Media update failed:', err);
+      res.status(400).json({ error: 'Failed to update media asset' });
+    }
+  }
+);
+
+adminRouter.post(
+  '/media/:id/replace',
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
+  async (req: AuthRequest, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { filename, mimeType, dataBase64 } = req.body || {};
+      if (!filename || !mimeType || !dataBase64) {
+        return res.status(400).json({ error: 'Missing replacement image payload' });
+      }
+      const cleanBase64 = String(dataBase64).replace(/^data:[^;]+;base64,/, '');
+      const [updated] = await db
+        .update(mediaAssets)
+        .set({
+          filename: String(filename).slice(0, 180),
+          mimeType: String(mimeType),
+          dataBase64: cleanBase64,
+        })
+        .where(eq(mediaAssets.id, id))
+        .returning({
+          id: mediaAssets.id,
+          filename: mediaAssets.filename,
+          mimeType: mediaAssets.mimeType,
+          altText: mediaAssets.altText,
+          folder: mediaAssets.folder,
+        });
+      if (!updated) return res.status(404).json({ error: 'Media asset not found' });
+
+      await recordAuditLog({
+        actor: req.appUser,
+        action: 'replace_media',
+        entityType: 'media',
+        entityId: id,
+        details: { filename: updated.filename },
+      });
+
+      res.json({ ...updated, url: `/api/media/${updated.id}` });
+    } catch (err) {
+      console.error('Media replace failed:', err);
+      res.status(400).json({ error: 'Failed to replace media asset' });
+    }
+  }
+);
+
 adminRouter.delete(
   '/media/:id',
-  requireRole(['super_admin', 'business_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
@@ -1263,7 +2140,7 @@ adminRouter.get('/settings', async (_req, res) => {
 
 adminRouter.put(
   '/settings',
-  requireRole(['super_admin']),
+  requireRole(['super_admin', 'business_owner']),
   async (req: AuthRequest, res) => {
     try {
       const value = {
@@ -1319,7 +2196,7 @@ adminRouter.get('/content', async (_req, res) => {
 
 adminRouter.put(
   '/content',
-  requireRole(['super_admin', 'business_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
   async (req: AuthRequest, res) => {
     try {
       const value = {
@@ -1356,10 +2233,10 @@ adminRouter.put(
   }
 );
 
-// 12. Users & Roles (Super Admin only)
+// 12. Users & Roles (Super Admin & Business Owner)
 adminRouter.get(
   '/users',
-  requireRole(['super_admin']),
+  requireRole(['super_admin', 'business_owner']),
   async (_req, res) => {
     try {
       const rows = await db
@@ -1384,15 +2261,101 @@ adminRouter.get(
   }
 );
 
+adminRouter.post(
+  '/users',
+  requireRole(['super_admin', 'business_owner']),
+  async (req: AuthRequest, res) => {
+    try {
+      const { email, password, fullName, phone, role } = req.body || {};
+      const cleanEmail = String(email || '').trim().toLowerCase();
+      if (!cleanEmail || !cleanEmail.includes('@')) {
+        return res.status(400).json({ error: 'Valid email address is required' });
+      }
+      if (!password || String(password).length < 8) {
+        return res
+          .status(400)
+          .json({ error: 'Password must be at least 8 characters' });
+      }
+      const validRoles: UserRole[] = [
+        'super_admin',
+        'business_owner',
+        'business_manager',
+        'sales_staff',
+        'inventory_manager',
+        'customer',
+      ];
+      const assignedRole = (role || 'sales_staff') as UserRole;
+      if (!validRoles.includes(assignedRole)) {
+        return res.status(400).json({ error: 'Invalid role' });
+      }
+      if (
+        assignedRole === 'super_admin' &&
+        req.appUser!.role !== 'super_admin'
+      ) {
+        return res.status(403).json({
+          error: 'Only a Super Admin can create another Super Admin account',
+        });
+      }
+
+      const existing = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, cleanEmail))
+        .limit(1);
+      if (existing.length > 0) {
+        return res
+          .status(409)
+          .json({ error: 'An account with this email already exists' });
+      }
+
+      const [created] = await db
+        .insert(users)
+        .values({
+          uid: `local_${crypto.randomUUID()}`,
+          email: cleanEmail,
+          passwordHash: hashPassword(String(password)),
+          fullName: String(fullName || '').trim(),
+          phone: String(phone || '').trim(),
+          role: assignedRole,
+          isActive: true,
+        })
+        .returning({
+          id: users.id,
+          uid: users.uid,
+          email: users.email,
+          fullName: users.fullName,
+          phone: users.phone,
+          role: users.role,
+          isActive: users.isActive,
+          createdAt: users.createdAt,
+        });
+
+      await recordAuditLog({
+        actor: req.appUser,
+        action: 'create_user',
+        entityType: 'user',
+        entityId: created.id,
+        details: { email: created.email, role: created.role },
+      });
+
+      res.status(201).json(created);
+    } catch (err) {
+      console.error('Create staff user failed:', err);
+      res.status(400).json({ error: 'Failed to create staff account' });
+    }
+  }
+);
+
 adminRouter.put(
   '/users/:id/role',
-  requireRole(['super_admin']),
+  requireRole(['super_admin', 'business_owner']),
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
       const { role, isActive } = req.body || {};
       const validRoles: UserRole[] = [
         'super_admin',
+        'business_owner',
         'business_manager',
         'sales_staff',
         'inventory_manager',
@@ -1401,10 +2364,27 @@ adminRouter.put(
       if (role && !validRoles.includes(role)) {
         return res.status(400).json({ error: 'Invalid role' });
       }
-      if (id === req.appUser!.id && role && role !== 'super_admin') {
+      if (id === req.appUser!.id && role && role !== req.appUser!.role) {
         return res
           .status(400)
-          .json({ error: 'You cannot demote your own active Super Admin account' });
+          .json({ error: 'You cannot change your own active administrative role' });
+      }
+
+      const targetRows = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+      if (targetRows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (
+        (targetRows[0].role === 'super_admin' || role === 'super_admin') &&
+        req.appUser!.role !== 'super_admin'
+      ) {
+        return res.status(403).json({
+          error: 'Only a Super Admin can modify or assign the Super Admin role',
+        });
       }
 
       const [updated] = await db
@@ -1423,8 +2403,6 @@ adminRouter.put(
           role: users.role,
           isActive: users.isActive,
         });
-
-      if (!updated) return res.status(404).json({ error: 'User not found' });
 
       await recordAuditLog({
         actor: req.appUser,
@@ -1445,14 +2423,14 @@ adminRouter.put(
 // 13. Audit Logs
 adminRouter.get(
   '/audit-logs',
-  requireRole(['super_admin', 'business_manager']),
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
   async (_req, res) => {
     try {
       const rows = await db
         .select()
         .from(auditLogs)
         .orderBy(desc(auditLogs.createdAt))
-        .limit(150);
+        .limit(200);
       res.json(rows);
     } catch (err) {
       console.error('Audit logs fetch failed:', err);

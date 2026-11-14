@@ -19,7 +19,7 @@ export const users = pgTable('users', {
   businessName: text('business_name').notNull().default(''),
   deliveryAddress: text('delivery_address').notNull().default(''),
   district: text('district').notNull().default(''),
-  role: text('role').notNull().default('customer'), // super_admin | business_manager | sales_staff | inventory_manager | customer
+  role: text('role').notNull().default('customer'), // super_admin | business_owner | business_manager | sales_staff | inventory_manager | customer
   isActive: boolean('is_active').notNull().default(true),
   resetToken: text('reset_token'),
   resetTokenExpires: timestamp('reset_token_expires'),
@@ -54,6 +54,7 @@ export const products = pgTable('products', {
   packagingQuantity: text('packaging_quantity').notNull().default(''),
   unitPrice: integer('unit_price'),
   wholesalePrice: integer('wholesale_price'),
+  costPrice: integer('cost_price'),
   moq: integer('moq').notNull().default(1),
   stockQuantity: integer('stock_quantity').notNull().default(0),
   lowStockThreshold: integer('low_stock_threshold').notNull().default(10),
@@ -111,6 +112,37 @@ export const orderItems = pgTable('order_items', {
   lineTotal: integer('line_total').notNull().default(0),
 });
 
+export const payments = pgTable('payments', {
+  id: serial('id').primaryKey(),
+  orderId: integer('order_id')
+    .references(() => orders.id, { onDelete: 'cascade' })
+    .notNull(),
+  orderNumber: text('order_number').notNull(),
+  amount: integer('amount').notNull(),
+  method: text('method').notNull().default('mobile_money'), // mobile_money | bank_transfer | cash | other
+  reference: text('reference').notNull().default(''),
+  proofImageUrl: text('proof_image_url').notNull().default(''),
+  status: text('status').notNull().default('pending'), // pending | verified | rejected
+  notes: text('notes').notNull().default(''),
+  recordedBy: integer('recorded_by').references(() => users.id, {
+    onDelete: 'set null',
+  }),
+  verifiedBy: integer('verified_by').references(() => users.id, {
+    onDelete: 'set null',
+  }),
+  verifiedAt: timestamp('verified_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export interface QuotationLineItemRecord {
+  productName: string;
+  sku: string;
+  size: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
 export const quotations = pgTable('quotations', {
   id: serial('id').primaryKey(),
   quoteNumber: text('quote_number').notNull().unique(),
@@ -130,6 +162,8 @@ export const quotations = pgTable('quotations', {
   additionalRequirements: text('additional_requirements').notNull().default(''),
   referenceImageUrl: text('reference_image_url').notNull().default(''),
   status: text('status').notNull().default('new'), // new | under_review | quotation_sent | accepted | rejected | completed
+  items: jsonb('items').$type<QuotationLineItemRecord[]>().notNull().default([]),
+  discountAmount: integer('discount_amount').notNull().default(0),
   proposedUnitPrice: integer('proposed_unit_price'),
   proposedQuantity: integer('proposed_quantity'),
   proposedTotal: integer('proposed_total'),
@@ -179,6 +213,7 @@ export const mediaAssets = pgTable('media_assets', {
   mimeType: text('mime_type').notNull(),
   dataBase64: text('data_base64').notNull(),
   altText: text('alt_text').notNull().default(''),
+  folder: text('folder').notNull().default('general'),
   uploadedBy: integer('uploaded_by').references(() => users.id, {
     onDelete: 'set null',
   }),
@@ -206,6 +241,20 @@ export const auditLogs = pgTable('audit_logs', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
+export const whatsappClicks = pgTable('whatsapp_clicks', {
+  id: serial('id').primaryKey(),
+  eventType: text('event_type').notNull(), // product_order | wholesale_quote | whatsapp_contact
+  productId: integer('product_id').references(() => products.id, {
+    onDelete: 'set null',
+  }),
+  productName: text('product_name').notNull().default(''),
+  sku: text('sku').notNull().default(''),
+  selectedSize: text('selected_size').notNull().default(''),
+  quantity: integer('quantity').notNull().default(1),
+  sourcePage: text('source_page').notNull().default(''),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
   products: many(products),
@@ -225,6 +274,14 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
     references: [users.id],
   }),
   items: many(orderItems),
+  payments: many(payments),
+}));
+
+export const paymentsRelations = relations(payments, ({ one }) => ({
+  order: one(orders, {
+    fields: [payments.orderId],
+    references: [orders.id],
+  }),
 }));
 
 export const orderItemsRelations = relations(orderItems, ({ one }) => ({
