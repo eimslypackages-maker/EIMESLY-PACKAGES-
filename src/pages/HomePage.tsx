@@ -14,6 +14,7 @@ import {
   trackWhatsAppClick,
 } from '../lib/whatsapp';
 import { ProductCard } from '../components/ProductCard';
+import { SAMPLE_PRODUCTS } from '../data/sampleProducts';
 import { SmartImage } from '../components/SmartImage';
 import heroPackagingImage from '../assets/images/hero_packaging_collection_1794679094459.jpg';
 import paperBagsImage from '../assets/images/cat_paper_bags_1794679095036.jpg';
@@ -35,7 +36,9 @@ export function HomePage() {
         { id: 4, name: 'Paper Bags', slug: 'paper-bags', description: 'Carrier bags for food service and retail packaging.', imageUrl: paperBagsImage },
         { id: 5, name: 'Cutlery & Napkins', slug: 'cutlery-napkins', description: 'Food-service cutlery and napkins for everyday use.', imageUrl: cutleryNapkinsImage },
       ];
-  const featuredProducts = bootstrap?.featuredProducts || [];
+  const featuredProducts = bootstrap?.featuredProducts?.length
+    ? bootstrap.featuredProducts
+    : SAMPLE_PRODUCTS;
 
   useDocumentMeta(
     content?.seoTitle || 'Eimesly Packages – Smart Packaging Solutions for Every Business',
