@@ -22,6 +22,7 @@ import {
   trackWhatsAppClick,
 } from '../lib/whatsapp';
 import { ProductCard } from '../components/ProductCard';
+import { SAMPLE_PRODUCTS } from '../data/sampleProducts';
 import { SmartImage } from '../components/SmartImage';
 import type { Product } from '../shared/types';
 
@@ -75,7 +76,21 @@ export function ProductDetailPage({ slug }: { slug: string }) {
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err.message || 'Product not found');
+        if (cancelled) return;
+        const sampleProduct = SAMPLE_PRODUCTS.find((item) => item.slug === slug);
+        if (sampleProduct) {
+          const units = derivePackagingUnits(sampleProduct);
+          setData({
+            product: sampleProduct,
+            related: SAMPLE_PRODUCTS.filter((item) => item.id !== sampleProduct.id).slice(0, 4),
+          });
+          setSelectedSize(sampleProduct.sizes?.[0] || '');
+          setSelectedVariation(sampleProduct.colors?.[0] || '');
+          setPackagingUnit(units[0] || 'Pack');
+          setQuantity(Math.max(1, sampleProduct.moq || 1));
+        } else {
+          setError(err.message || 'Product not found');
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
