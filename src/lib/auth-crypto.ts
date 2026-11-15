@@ -1,11 +1,23 @@
 import crypto from 'node:crypto';
-import firebaseConfig from '../../firebase-applet-config.json';
+import fs from 'node:fs';
+
+function loadProjectId(): string {
+  try {
+    const configUrl = new URL('../../firebase-applet-config.json', import.meta.url);
+    const parsed = JSON.parse(fs.readFileSync(configUrl, 'utf8')) as { projectId?: string };
+    return parsed.projectId || 'eimesly-packages';
+  } catch {
+    return process.env.GOOGLE_CLOUD_PROJECT || 'eimesly-packages';
+  }
+}
+
+const FIREBASE_PROJECT_ID = loadProjectId();
 
 function getSigningSecret(): string {
   const base =
     process.env.SESSION_SECRET ||
     process.env.AUTH_SECRET ||
-    `${firebaseConfig.projectId}:${process.env.SQL_PASSWORD || 'eimesly-packages-session'}`;
+    `${FIREBASE_PROJECT_ID}:${process.env.SQL_PASSWORD || 'eimesly-packages-session'}`;
   return crypto.createHash('sha256').update(base).digest('hex');
 }
 

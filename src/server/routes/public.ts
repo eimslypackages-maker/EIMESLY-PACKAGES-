@@ -15,16 +15,16 @@ import {
   DEFAULT_WEBSITE_SETTINGS,
   ensureSeeded,
 } from '../../db/seed.ts';
-import { optionalAuth, AuthRequest } from '../../middleware/auth.ts';
+import { optionalAuth, type AuthRequest } from '../../middleware/auth.ts';
 
 export const publicRouter = Router();
 
 function sanitizePublicProduct<
   T extends { wholesalePrice: number | null; costPrice: number | null }
->(p: T, showWholesalePricesPublicly: boolean): T {
+>(p: T): T {
   return {
     ...p,
-    wholesalePrice: showWholesalePricesPublicly ? p.wholesalePrice : null,
+    wholesalePrice: null,
     costPrice: null,
   };
 }
@@ -58,18 +58,14 @@ publicRouter.get('/bootstrap', async (_req, res) => {
         .limit(8),
     ]);
 
-    const showWholesale = Boolean(settings.showWholesalePricesPublicly);
     const catById = new Map(activeCategories.map((c) => [c.id, c]));
     const featuredProducts = featuredRows.map((p) => {
       const cat = p.categoryId ? catById.get(p.categoryId) : undefined;
-      return sanitizePublicProduct(
-        {
-          ...p,
-          categoryName: cat?.name ?? 'Uncategorized',
-          categorySlug: cat?.slug ?? '',
-        },
-        showWholesale
-      );
+      return sanitizePublicProduct({
+        ...p,
+        categoryName: cat?.name ?? 'Uncategorized',
+        categorySlug: cat?.slug ?? '',
+      });
     });
 
     res.json({
@@ -131,6 +127,7 @@ publicRouter.get('/products/suggestions', async (req, res) => {
         name: products.name,
         slug: products.slug,
         sku: products.sku,
+        unitPrice: products.unitPrice,
         images: products.images,
       })
       .from(products)
@@ -168,12 +165,11 @@ publicRouter.get('/products', async (req, res) => {
     const page = Math.max(1, Number(req.query.page || 1));
     const limit = Math.min(20, Math.max(1, Number(req.query.limit || 20)));
 
-    const [settings, allCats, allActive] = await Promise.all([
+    const [_settings, allCats, allActive] = await Promise.all([
       getSettingValue('settings', DEFAULT_WEBSITE_SETTINGS),
       db.select().from(categories),
       db.select().from(products).where(eq(products.isActive, true)),
     ]);
-    const showWholesale = Boolean(settings.showWholesalePricesPublicly);
     const catById = new Map(allCats.map((c) => [c.id, c]));
     const catBySlug = new Map(allCats.map((c) => [c.slug, c]));
 
@@ -192,14 +188,11 @@ publicRouter.get('/products', async (req, res) => {
     // Filter in memory for rich JSONB array + multi-field matching
     let filtered = allActive.map((p) => {
       const cat = p.categoryId ? catById.get(p.categoryId) : undefined;
-      return sanitizePublicProduct(
-        {
-          ...p,
-          categoryName: cat?.name ?? 'Uncategorized',
-          categorySlug: cat?.slug ?? '',
-        },
-        showWholesale
-      );
+      return sanitizePublicProduct({
+        ...p,
+        categoryName: cat?.name ?? 'Uncategorized',
+        categorySlug: cat?.slug ?? '',
+      });
     });
 
     if (categorySlug) {
@@ -333,32 +326,23 @@ publicRouter.get('/products/:slug', async (req, res) => {
           .limit(5)
       : [];
 
-    const settings = await getSettingValue('settings', DEFAULT_WEBSITE_SETTINGS);
-    const showWholesale = Boolean(settings.showWholesalePricesPublicly);
-
     const related = relatedRows
       .filter((r) => r.id !== p.id)
       .slice(0, 4)
       .map((r) =>
-        sanitizePublicProduct(
-          {
-            ...r,
-            categoryName: category?.name ?? 'Uncategorized',
-            categorySlug: category?.slug ?? '',
-          },
-          showWholesale
-        )
+        sanitizePublicProduct({
+          ...r,
+          categoryName: category?.name ?? 'Uncategorized',
+          categorySlug: category?.slug ?? '',
+        })
       );
 
     res.json({
-      product: sanitizePublicProduct(
-        {
-          ...p,
-          categoryName: category?.name ?? 'Uncategorized',
-          categorySlug: category?.slug ?? '',
-        },
-        showWholesale
-      ),
+      product: sanitizePublicProduct({
+        ...p,
+        categoryName: category?.name ?? 'Uncategorized',
+        categorySlug: category?.slug ?? '',
+      }),
       related,
     });
   } catch (err) {
@@ -447,6 +431,25 @@ publicRouter.get('/media/:id', async (req, res) => {
   }
 });
 
+async function resolveExistingProductId(rawId: unknown): Promise<number | null> {
+  const num = Number(rawId);
+  if (!Number.isInteger(num) || num <= 0 || num > 2147483647) {
+    return null;
+  }
+  const existing = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(eq(products.id, num))
+    .limit(1);
+  return existing.length > 0 ? existing[0].id : null;
+}
+
+function clampPgInt(raw: unknown, fallback = 1, min = 1): number {
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(2147483647, Math.max(min, Math.round(num)));
+}
+
 // WhatsApp Click & Enquiry Analytics (non-blocking tracking, not treated as confirmed sales)
 publicRouter.post('/analytics/whatsapp-click', async (req, res) => {
   try {
@@ -457,13 +460,15 @@ publicRouter.post('/analytics/whatsapp-click', async (req, res) => {
       ? String(b.eventType)
       : 'whatsapp_contact';
 
+    const resolvedProductId = await resolveExistingProductId(b.productId);
+
     await db.insert(whatsappClicks).values({
       eventType,
-      productId: b.productId ? Number(b.productId) : null,
+      productId: resolvedProductId,
       productName: String(b.productName || '').slice(0, 180),
       sku: String(b.sku || '').slice(0, 80),
       selectedSize: String(b.selectedSize || '').slice(0, 80),
-      quantity: Math.max(1, Math.round(Number(b.quantity || 1))),
+      quantity: clampPgInt(b.quantity, 1, 1),
       sourcePage: String(b.sourcePage || '').slice(0, 120),
     });
 
@@ -499,6 +504,7 @@ publicRouter.post('/quotations', optionalAuth, async (req: AuthRequest, res) => 
     const quoteNumber = `EPQ-${Date.now().toString().slice(-6)}-${Math.floor(
       100 + Math.random() * 900
     )}`;
+    const resolvedProductId = await resolveExistingProductId(productId);
 
     const [created] = await db
       .insert(quotations)
@@ -510,8 +516,8 @@ publicRouter.post('/quotations', optionalAuth, async (req: AuthRequest, res) => 
         phone: String(phone).trim(),
         email: String(email || '').trim(),
         productInterested: String(productInterested).trim(),
-        productId: productId ? Number(productId) : null,
-        estimatedQuantity: Math.max(1, Number(estimatedQuantity || 1)),
+        productId: resolvedProductId,
+        estimatedQuantity: clampPgInt(estimatedQuantity, 1, 1),
         preferredSize: String(preferredSize || '').trim(),
         additionalRequirements: String(additionalRequirements || '').trim(),
         referenceImageUrl: String(referenceImageUrl || '').trim(),

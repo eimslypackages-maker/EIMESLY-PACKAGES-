@@ -720,7 +720,7 @@ export function AdminSettings() {
                       <strong className="font-mono">https://wa.me/{sanitized}</strong>
                     ) : (
                       <strong className="text-red-700">
-                        Not configured — storefront Order Now buttons will show a contact fallback notice
+                        Not configured — storefront Order Message Ready popups will warn users and disable Send Order until configured
                       </strong>
                     )}
                   </span>
@@ -746,7 +746,7 @@ export function AdminSettings() {
                   className="w-full px-3 py-2 text-sm border border-[#202020]/20 rounded-md"
                 />
                 <p className="mt-1 text-[11px] text-[#202020]/60">
-                  Used as the closing line in Order Now messages, or supply full custom placeholders: {'{product}'}, {'{sku}'}, {'{size}'}, {'{variation}'}, {'{quantity}'}, {'{price}'}.
+                  Used as the closing line in Order Now messages, or supply full custom placeholders: {'{product}'}, {'{sku}'}, {'{size}'}, {'{variation}'}, {'{quantity}'}, {'{price}'}, {'{total}'}.
                 </p>
               </div>
 
@@ -789,27 +789,9 @@ export function AdminSettings() {
                 />
               </div>
 
-              <label className="inline-flex items-start gap-2.5 text-sm pt-1">
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings.showWholesalePricesPublicly)}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      showWholesalePricesPublicly: e.target.checked,
-                    })
-                  }
-                  className="mt-0.5"
-                />
-                <span>
-                  <span className="font-medium text-[#202020] block">
-                    Display wholesale unit prices publicly on product pages
-                  </span>
-                  <span className="text-xs text-[#202020]/60">
-                    Recommended OFF: wholesale prices stay private and customers use Request Wholesale Quote on WhatsApp.
-                  </span>
-                </span>
-              </label>
+              <p className="text-xs text-[#202020]/60 pt-1">
+                Private wholesale prices are kept internal to Admin Management and are never displayed publicly on the storefront.
+              </p>
             </div>
           </div>
 

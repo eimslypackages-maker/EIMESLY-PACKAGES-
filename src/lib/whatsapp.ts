@@ -68,14 +68,168 @@ export function formatQuantityWithUnit(quantity: number, unit: string): string {
   return `${qty} ${unit}s`;
 }
 
+function isGreetingTemplate(text: string): boolean {
+  const lower = text.trim().toLowerCase();
+  return (
+    lower.startsWith('hello eimesly') ||
+    lower.includes('i would like to order the following product') ||
+    lower.includes('interested in purchasing your products in bulk')
+  );
+}
+
+export interface OrderLineSummaryItem {
+  name: string;
+  sku?: string;
+  selectedSize?: string;
+  selectedVariation?: string;
+  unitPrice: number | null | undefined;
+  quantity: number;
+  packagingUnit?: string;
+}
+
+export function formatOrderRwf(
+  amount: number | null | undefined,
+  currency = 'RWF'
+): string {
+  if (amount === null || amount === undefined || Number.isNaN(Number(amount))) {
+    return 'Price on Request';
+  }
+  const num = Number(amount);
+  if (!Number.isFinite(num)) return 'Price on Request';
+  return `${currency} ${Math.round(num).toLocaleString('en-US')}`;
+}
+
+export function calculateLineTotal(
+  unitPrice: number | null | undefined,
+  quantity: number
+): number | null {
+  if (unitPrice === null || unitPrice === undefined) return null;
+  const price = Number(unitPrice);
+  if (Number.isNaN(price) || !Number.isFinite(price)) return null;
+  const safeQty = Math.max(1, Math.round(Number(quantity) || 1));
+  return Math.round(price * safeQty);
+}
+
+export function calculateCombinedOrderTotal(
+  items: Array<{ unitPrice: number | null | undefined; quantity: number }>
+): number | null {
+  if (!items.length) return null;
+  let total = 0;
+  for (const item of items) {
+    const lineTotal = calculateLineTotal(item.unitPrice, item.quantity);
+    if (lineTotal === null) {
+      return null;
+    }
+    total += lineTotal;
+  }
+  return total;
+}
+
+export function calculatePricedItemsSubtotal(
+  items: Array<{ unitPrice: number | null | undefined; quantity: number }>
+): { pricedSubtotal: number; hasPricedItems: boolean; hasUnpricedItems: boolean } {
+  let pricedSubtotal = 0;
+  let hasPricedItems = false;
+  let hasUnpricedItems = false;
+  for (const item of items) {
+    const lineTotal = calculateLineTotal(item.unitPrice, item.quantity);
+    if (lineTotal === null) {
+      hasUnpricedItems = true;
+    } else {
+      hasPricedItems = true;
+      pricedSubtotal += lineTotal;
+    }
+  }
+  return { pricedSubtotal, hasPricedItems, hasUnpricedItems };
+}
+
+export function formatOrderDateDDMMYYYY(date = new Date()): string {
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+export function buildMultiProductOrderMessage(params: {
+  items: OrderLineSummaryItem[];
+  orderDate?: string;
+  currency?: string;
+  template?: string;
+}): string {
+  const { items, orderDate, currency = 'RWF', template } = params;
+  if (!items.length) return '';
+
+  const effectiveDate = orderDate || formatOrderDateDDMMYYYY();
+  const trimmedTemplate = template?.trim() || '';
+  const closingNote =
+    trimmedTemplate &&
+    !isGreetingTemplate(trimmedTemplate) &&
+    !trimmedTemplate.includes('{product}')
+      ? trimmedTemplate
+      : 'Please confirm availability and provide payment and delivery information.';
+
+  const { pricedSubtotal, hasPricedItems, hasUnpricedItems } =
+    calculatePricedItemsSubtotal(items);
+  const combinedTotal = calculateCombinedOrderTotal(items);
+  const grandTotalText = formatOrderRwf(combinedTotal, currency);
+
+  const lines = [
+    '*EIMESLY PACKAGES – CUSTOMER ORDER*',
+    `*Order Date: ${effectiveDate}*`,
+    '',
+    'Item Name | Size | Qty | Unit Price | Total Price',
+  ];
+
+  items.forEach((item, index) => {
+    const sizeText = item.selectedSize?.trim() || 'Standard';
+    const variationSuffix = item.selectedVariation?.trim()
+      ? ` (${item.selectedVariation.trim()})`
+      : '';
+    const skuSuffix = item.sku?.trim() ? ` [${item.sku.trim()}]` : '';
+    const itemNameLabel = `${index + 1}. ${item.name}${variationSuffix}${skuSuffix}`;
+    const qtyText = formatQuantityWithUnit(
+      item.quantity,
+      item.packagingUnit || 'Pack'
+    );
+    const unitPriceText = formatOrderRwf(item.unitPrice, currency);
+    const lineTotal = calculateLineTotal(item.unitPrice, item.quantity);
+    const totalPriceText = formatOrderRwf(lineTotal, currency);
+
+    lines.push(
+      `${itemNameLabel} | ${sizeText} | ${qtyText} | ${unitPriceText} | ${totalPriceText}`
+    );
+  });
+
+  lines.push('');
+  if (hasUnpricedItems && hasPricedItems) {
+    lines.push(
+      `Priced Items Subtotal: ${formatOrderRwf(pricedSubtotal, currency)}`
+    );
+  }
+  lines.push(`*GRAND TOTAL: ${grandTotalText}*`);
+  if (hasUnpricedItems) {
+    lines.push(
+      'Note: Items marked Price on Request will have the final order amount confirmed on WhatsApp.'
+    );
+  }
+  lines.push('');
+  lines.push(closingNote);
+  lines.push('');
+  lines.push('Thank you.');
+
+  return lines.join('\n');
+}
+
 export function buildProductOrderMessage(params: {
   product: Pick<Product, 'name' | 'sku' | 'unitPrice'>;
   selectedSize?: string;
   selectedVariation?: string;
   quantity: number;
   packagingUnit?: string;
+  orderDate?: string;
   currency?: string;
   template?: string;
+  items?: OrderLineSummaryItem[];
 }): string {
   const {
     product,
@@ -83,52 +237,62 @@ export function buildProductOrderMessage(params: {
     selectedVariation,
     quantity,
     packagingUnit = 'Pack',
+    orderDate,
     currency = 'RWF',
     template,
+    items,
   } = params;
 
-  const qtyText = formatQuantityWithUnit(quantity, packagingUnit);
-  const priceText =
-    product.unitPrice !== null && product.unitPrice !== undefined
-      ? `${currency} ${product.unitPrice.toLocaleString('en-US')}`
-      : 'Price on Request';
+  const effectiveDate = orderDate || formatOrderDateDDMMYYYY();
+
+  if (items && items.length > 0) {
+    return buildMultiProductOrderMessage({
+      items,
+      orderDate: effectiveDate,
+      currency,
+      template,
+    });
+  }
+
+  const safeQty = Math.max(1, Math.round(Number(quantity) || 1));
+  const qtyText = formatQuantityWithUnit(safeQty, packagingUnit);
+  const priceText = formatOrderRwf(product.unitPrice, currency);
+  const computedTotal = calculateLineTotal(product.unitPrice, safeQty);
+  const grandTotalText = formatOrderRwf(computedTotal, currency);
 
   if (template && template.includes('{product}')) {
-    return template
+    const rendered = template
       .replace(/\{product\}/g, product.name)
       .replace(/\{sku\}/g, product.sku)
       .replace(/\{size\}/g, selectedSize || 'Standard')
       .replace(/\{variation\}/g, selectedVariation || 'Standard')
       .replace(/\{quantity\}/g, qtyText)
-      .replace(/\{price\}/g, priceText);
+      .replace(/\{price\}/g, priceText)
+      .replace(/\{total\}/g, grandTotalText)
+      .trim();
+
+    if (template.includes('{total}')) {
+      return rendered;
+    }
+    return `${rendered}\n\n*GRAND TOTAL: ${grandTotalText}*`;
   }
 
-  const lines = [
-    'Hello Eimesly Packages!',
-    '',
-    'I would like to order the following product:',
-    '',
-    `Product: ${product.name}`,
-    `SKU: ${product.sku}`,
-  ];
-
-  if (selectedSize) {
-    lines.push(`Size: ${selectedSize}`);
-  }
-  if (selectedVariation) {
-    lines.push(`Variation: ${selectedVariation}`);
-  }
-  lines.push(`Quantity: ${qtyText}`);
-  lines.push(`Displayed Retail Price: ${priceText}`);
-  lines.push('');
-  lines.push(
-    template?.trim() ||
-      'Please confirm availability and provide payment and delivery information.'
-  );
-  lines.push('');
-  lines.push('Thank you.');
-
-  return lines.join('\n');
+  return buildMultiProductOrderMessage({
+    items: [
+      {
+        name: product.name,
+        sku: product.sku,
+        selectedSize,
+        selectedVariation,
+        unitPrice: product.unitPrice,
+        quantity: safeQty,
+        packagingUnit,
+      },
+    ],
+    orderDate: effectiveDate,
+    currency,
+    template,
+  });
 }
 
 export function buildWholesaleQuoteMessage(params: {
@@ -153,8 +317,15 @@ export function buildWholesaleQuoteMessage(params: {
       .replace(/\{product\}/g, productName)
       .replace(/\{quantity\}/g, String(requiredQuantity))
       .replace(/\{business\}/g, businessName || 'Not specified')
-      .replace(/\{location\}/g, location || 'Kigali, Rwanda');
+      .replace(/\{location\}/g, location || 'Kigali, Rwanda')
+      .trim();
   }
+
+  const trimmedTemplate = template?.trim() || '';
+  const closingNote =
+    trimmedTemplate && !isGreetingTemplate(trimmedTemplate)
+      ? trimmedTemplate
+      : 'Please send me your wholesale prices and quotation.';
 
   const lines = [
     'Hello Eimesly Packages!',
@@ -166,7 +337,7 @@ export function buildWholesaleQuoteMessage(params: {
     `Business Name: ${businessName?.trim() || 'Optional / Individual Buyer'}`,
     `Location: ${location?.trim() || 'Kigali, Rwanda'}`,
     '',
-    template?.trim() || 'Please send me your wholesale prices and quotation.',
+    closingNote,
     '',
     'Thank you.',
   ];

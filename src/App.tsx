@@ -4,8 +4,10 @@
  */
 
 import { AppProvider, useApp } from './context/AppContext';
+import { OrderListProvider } from './context/OrderListContext';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
+import { MyOrderDrawer } from './components/MyOrderDrawer';
 import { HomePage } from './pages/HomePage';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { ShopPage } from './pages/ShopPage';
@@ -30,6 +32,7 @@ import {
   AdminEnquiries,
 } from './pages/admin/AdminEnquiriesAndCustomers';
 import { AdminReports } from './pages/admin/AdminReports';
+import { AdminWhatsAppAnalytics } from './pages/admin/AdminWhatsAppAnalytics';
 import {
   AdminContent,
   AdminMedia,
@@ -61,6 +64,7 @@ function AppRouter() {
   if (pathname === '/admin/customers') return <AdminCustomers />;
   if (pathname === '/admin/inventory') return <AdminInventory />;
   if (pathname === '/admin/reports') return <AdminReports />;
+  if (pathname === '/admin/whatsapp-analytics') return <AdminWhatsAppAnalytics />;
   if (pathname === '/admin/content') return <AdminContent />;
   if (pathname === '/admin/media') return <AdminMedia />;
   if (pathname === '/admin/users') return <AdminUsers />;
@@ -148,6 +152,7 @@ function AppRouter() {
       <Navbar />
       <main className="flex-1">{pageElement}</main>
       <Footer />
+      <MyOrderDrawer />
     </div>
   );
 }
@@ -155,7 +160,9 @@ function AppRouter() {
 export default function App() {
   return (
     <AppProvider>
-      <AppRouter />
+      <OrderListProvider>
+        <AppRouter />
+      </OrderListProvider>
     </AppProvider>
   );
 }

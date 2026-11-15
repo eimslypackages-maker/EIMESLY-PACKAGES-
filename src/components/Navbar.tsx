@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Menu, MessageCircle, Search, X } from 'lucide-react';
+import { Menu, MessageCircle, Search, ShoppingBag, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { useOrderList } from '../context/OrderListContext';
 import { apiFetch } from '../lib/api';
+import { formatRwf } from '../lib/format';
 import {
   buildGeneralEnquiryMessage,
   buildWhatsAppUrl,
@@ -13,10 +15,12 @@ interface Suggestion {
   name: string;
   slug: string;
   sku: string;
+  unitPrice?: number | null;
 }
 
 export function Navbar() {
   const { path, navigate, bootstrap } = useApp();
+  const { totalItemCount, openDrawer } = useOrderList();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -141,7 +145,7 @@ export function Navbar() {
           })}
         </nav>
 
-        {/* Right Actions: Search + WhatsApp Us */}
+        {/* Right Actions: Search + My Order + WhatsApp Us */}
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
@@ -150,6 +154,23 @@ export function Navbar() {
             className="p-2 text-[#202020]/80 hover:text-[#202020] hover:bg-[#F5F5F5] rounded-md transition-colors"
           >
             <Search className="w-5 h-5" strokeWidth={1.75} />
+          </button>
+
+          <button
+            type="button"
+            onClick={openDrawer}
+            aria-label={`Open My Order (${totalItemCount} items)`}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs sm:text-sm font-semibold rounded-md border transition-colors whitespace-nowrap shrink-0 ${
+              totalItemCount > 0
+                ? 'bg-[#FAF7F2] border-[#B58B61] text-[#202020] hover:bg-[#F3EEE6]'
+                : 'bg-[#FFFFFF] border-[#202020]/20 text-[#202020] hover:bg-[#F5F5F5]'
+            }`}
+          >
+            <ShoppingBag className="w-4 h-4 text-[#B58B61]" strokeWidth={2} />
+            <span>My Order</span>
+            <span className="tabular-nums font-bold text-[#8C6843]">
+              ({totalItemCount})
+            </span>
           </button>
 
           {whatsappUrl ? (
@@ -163,7 +184,7 @@ export function Navbar() {
                   sourcePage: 'navbar',
                 })
               }
-              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors whitespace-nowrap shrink-0"
+              className="hidden md:inline-flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors whitespace-nowrap shrink-0"
             >
               <MessageCircle className="w-4 h-4 text-[#B58B61]" strokeWidth={2} />
               <span>WhatsApp Us</span>
@@ -172,7 +193,7 @@ export function Navbar() {
             <button
               type="button"
               onClick={() => navigate('/contact')}
-              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors whitespace-nowrap shrink-0"
+              className="hidden md:inline-flex items-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors whitespace-nowrap shrink-0"
             >
               <MessageCircle className="w-4 h-4 text-[#B58B61]" strokeWidth={2} />
               <span>WhatsApp Us</span>
@@ -226,11 +247,16 @@ export function Navbar() {
                     }}
                     className="w-full px-4 py-2.5 text-left flex items-center justify-between hover:bg-[#F3EEE6]/60 transition-colors"
                   >
-                    <span className="text-sm font-medium text-[#202020]">
+                    <span className="text-sm font-medium text-[#202020] truncate pr-4">
                       {s.name}
                     </span>
-                    <span className="text-xs font-mono text-[#202020]/50">
-                      {s.sku}
+                    <span className="flex items-center gap-3 shrink-0">
+                      <span className="text-xs font-semibold text-[#202020] tabular-nums">
+                        {formatRwf(s.unitPrice)}
+                      </span>
+                      <span className="text-xs font-mono text-[#202020]/50">
+                        {s.sku}
+                      </span>
                     </span>
                   </button>
                 ))}

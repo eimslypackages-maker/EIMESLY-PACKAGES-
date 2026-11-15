@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { eq } from 'drizzle-orm';
 import { adminAuth } from '../lib/firebase-admin.ts';
 import { verifySessionToken } from '../lib/auth-crypto.ts';

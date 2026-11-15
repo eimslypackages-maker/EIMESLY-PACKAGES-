@@ -6,24 +6,12 @@ import {
   AVAILABILITY_LABELS,
   downloadCsv,
   formatDate,
-  formatDateTime,
   formatRwf,
   QUOTATION_STATUS_LABELS,
 } from '../../lib/format';
 import { AdminLayout } from './AdminLayout';
-import type { Order, Quotation, WhatsAppClickEventType } from '../../shared/types';
-
-interface WhatsAppClickLog {
-  id: number;
-  eventType: WhatsAppClickEventType;
-  productId: number | null;
-  productName: string;
-  sku: string;
-  selectedSize: string;
-  quantity: number;
-  sourcePage: string;
-  createdAt: string;
-}
+import { WhatsAppAnalyticsDashboard } from '../../components/admin/WhatsAppAnalyticsDashboard';
+import type { Order, Quotation } from '../../shared/types';
 
 interface ReportsResponse {
   summary: {
@@ -65,7 +53,17 @@ interface ReportsResponse {
     totalClicks: number;
     totalQuantityRequested: number;
   }>;
-  whatsappRecentClicks: WhatsAppClickLog[];
+  whatsappRecentClicks: Array<{
+    id: number;
+    eventType: string;
+    productId: number | null;
+    productName: string;
+    sku: string;
+    selectedSize: string;
+    quantity: number;
+    sourcePage: string;
+    createdAt: string;
+  }>;
   outstandingOrders: Order[];
   monthlySeries: Array<{
     month: string;
@@ -94,12 +92,6 @@ interface ReportsResponse {
     totalSpend: number;
   }>;
 }
-
-const CLICK_EVENT_LABELS: Record<string, string> = {
-  product_order: 'Product Order Now',
-  wholesale_quote: 'Wholesale Quote',
-  whatsapp_contact: 'General WhatsApp Chat',
-};
 
 export function AdminReports() {
   const [from, setFrom] = useState('');
@@ -517,168 +509,7 @@ export function AdminReports() {
 
             {activeReport === 'whatsapp' && (
               <div className="space-y-6">
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg p-4">
-                    <p className="text-xs text-[#202020]/60">Total Clicks</p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums">
-                      {s.totalWhatsappClicks}
-                    </p>
-                    <p className="text-[11px] text-[#202020]/55">
-                      Intent signals only
-                    </p>
-                  </div>
-                  <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg p-4">
-                    <p className="text-xs text-[#202020]/60">Product Order Now</p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums text-[#16A34A]">
-                      {s.productOrderClicks}
-                    </p>
-                    <p className="text-[11px] text-[#202020]/55">
-                      Product cards & pages
-                    </p>
-                  </div>
-                  <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg p-4">
-                    <p className="text-xs text-[#202020]/60">Wholesale Quotes</p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums text-[#B58B61]">
-                      {s.wholesaleQuoteClicks}
-                    </p>
-                    <p className="text-[11px] text-[#202020]/55">
-                      Bulk pricing enquiries
-                    </p>
-                  </div>
-                  <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg p-4">
-                    <p className="text-xs text-[#202020]/60">General Chat</p>
-                    <p className="mt-1 text-2xl font-bold tabular-nums">
-                      {s.whatsappContactClicks}
-                    </p>
-                    <p className="text-[11px] text-[#202020]/55">
-                      Nav, footer & contact CTAs
-                    </p>
-                  </div>
-                </div>
-
-                {/* Most Enquired Products on WhatsApp */}
-                <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg overflow-hidden">
-                  <div className="px-5 py-3.5 border-b border-[#202020]/10">
-                    <h2 className="text-sm font-bold text-[#202020]">
-                      Most Enquired Products on WhatsApp
-                    </h2>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="bg-[#F5F5F5] border-b border-[#202020]/10 text-[#202020]/65">
-                          <th className="py-2.5 px-4">Product</th>
-                          <th className="py-2.5 px-4">SKU</th>
-                          <th className="py-2.5 px-4 text-right">Order Clicks</th>
-                          <th className="py-2.5 px-4 text-right">Wholesale Clicks</th>
-                          <th className="py-2.5 px-4 text-right">Total Clicks</th>
-                          <th className="py-2.5 px-4 text-right">Qty Requested</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#202020]/10">
-                        {data.whatsappTopProducts.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="py-6 text-center text-[#202020]/60">
-                              No WhatsApp product clicks tracked in selected period.
-                            </td>
-                          </tr>
-                        ) : (
-                          data.whatsappTopProducts
-                            .filter(
-                              (w) =>
-                                !q ||
-                                w.productName.toLowerCase().includes(q) ||
-                                w.sku.toLowerCase().includes(q)
-                            )
-                            .map((w, idx) => (
-                              <tr key={idx}>
-                                <td className="py-2.5 px-4 font-medium">
-                                  {w.productName}
-                                </td>
-                                <td className="py-2.5 px-4 font-mono text-[#202020]/70">
-                                  {w.sku || '—'}
-                                </td>
-                                <td className="py-2.5 px-4 text-right tabular-nums">
-                                  {w.orderClicks}
-                                </td>
-                                <td className="py-2.5 px-4 text-right tabular-nums">
-                                  {w.quoteClicks}
-                                </td>
-                                <td className="py-2.5 px-4 text-right font-semibold tabular-nums">
-                                  {w.totalClicks}
-                                </td>
-                                <td className="py-2.5 px-4 text-right tabular-nums">
-                                  {w.totalQuantityRequested}
-                                </td>
-                              </tr>
-                            ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Recent WhatsApp Click Log */}
-                <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg overflow-hidden">
-                  <div className="px-5 py-3.5 border-b border-[#202020]/10">
-                    <h2 className="text-sm font-bold text-[#202020]">
-                      Recent WhatsApp Click Events (Latest 50)
-                    </h2>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="bg-[#F5F5F5] border-b border-[#202020]/10 text-[#202020]/65">
-                          <th className="py-2.5 px-4">Timestamp</th>
-                          <th className="py-2.5 px-4">Action</th>
-                          <th className="py-2.5 px-4">Product</th>
-                          <th className="py-2.5 px-4">Size</th>
-                          <th className="py-2.5 px-4 text-right">Qty</th>
-                          <th className="py-2.5 px-4">Source Page</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#202020]/10">
-                        {data.whatsappRecentClicks.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="py-6 text-center text-[#202020]/60">
-                              No click logs recorded in selected period.
-                            </td>
-                          </tr>
-                        ) : (
-                          data.whatsappRecentClicks
-                            .filter(
-                              (c) =>
-                                !q ||
-                                c.productName.toLowerCase().includes(q) ||
-                                c.sourcePage.toLowerCase().includes(q)
-                            )
-                            .map((c) => (
-                              <tr key={c.id}>
-                                <td className="py-2.5 px-4 text-[#202020]/65 whitespace-nowrap tabular-nums">
-                                  {formatDateTime(c.createdAt)}
-                                </td>
-                                <td className="py-2.5 px-4 font-medium">
-                                  {CLICK_EVENT_LABELS[c.eventType] || c.eventType}
-                                </td>
-                                <td className="py-2.5 px-4">
-                                  {c.productName || 'General Enquiry'}
-                                </td>
-                                <td className="py-2.5 px-4">
-                                  {c.selectedSize || '—'}
-                                </td>
-                                <td className="py-2.5 px-4 text-right tabular-nums">
-                                  {c.quantity || 1}
-                                </td>
-                                <td className="py-2.5 px-4 font-mono text-[#202020]/70">
-                                  {c.sourcePage}
-                                </td>
-                              </tr>
-                            ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                <WhatsAppAnalyticsDashboard embedded />
 
                 {/* Outstanding Balances on Manually Recorded Orders */}
                 <div className="bg-[#FFFFFF] border border-[#202020]/10 rounded-lg overflow-hidden">

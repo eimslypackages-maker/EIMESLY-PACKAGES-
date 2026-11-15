@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Check, Copy, MessageCircle, X } from 'lucide-react';
+import { Check, MessageCircle, Plus } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { useOrderList } from '../context/OrderListContext';
 import { AVAILABILITY_LABELS, formatRwf } from '../lib/format';
 import {
   buildProductOrderMessage,
@@ -9,6 +10,7 @@ import {
   trackWhatsAppClick,
 } from '../lib/whatsapp';
 import type { Product } from '../shared/types';
+import { OrderMessageModal } from './OrderMessageModal';
 import { SmartImage } from './SmartImage';
 
 interface ProductCardProps {
@@ -17,9 +19,10 @@ interface ProductCardProps {
 
 export function ProductCard({ product }: ProductCardProps) {
   const { navigate, bootstrap } = useApp();
+  const { addItem, items, openDrawer } = useOrderList();
   const settings = bootstrap?.settings;
-  const [fallbackOpen, setFallbackOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
+  const [justAdded, setJustAdded] = useState(false);
 
   const primaryImage = product.images?.[0] || '';
   const sizeSpec =
@@ -31,12 +34,17 @@ export function ProductCard({ product }: ProductCardProps) {
     AVAILABILITY_LABELS[product.availabilityStatus] || 'Available';
 
   const defaultSize = product.sizes?.[0] || '';
+  const defaultVariation = product.colors?.[0] || '';
   const defaultUnit = derivePackagingUnits(product)[0] || 'Pack';
   const defaultQty = Math.max(1, product.moq || 1);
+
+  const existingInOrder = items.filter((i) => i.productId === product.id);
+  const existingQty = existingInOrder.reduce((sum, i) => sum + i.quantity, 0);
 
   const orderMessage = buildProductOrderMessage({
     product,
     selectedSize: defaultSize,
+    selectedVariation: defaultVariation,
     quantity: defaultQty,
     packagingUnit: defaultUnit,
     currency: settings?.currency || 'RWF',
@@ -44,6 +52,18 @@ export function ProductCard({ product }: ProductCardProps) {
   });
 
   const whatsappUrl = buildWhatsAppUrl(settings, orderMessage);
+
+  const handleAddToOrder = () => {
+    addItem({
+      product,
+      selectedSize: defaultSize,
+      selectedVariation: defaultVariation,
+      packagingUnit: defaultUnit,
+      quantity: defaultQty,
+    });
+    setJustAdded(true);
+    setTimeout(() => setJustAdded(false), 1800);
+  };
 
   const handleTrackOrderClick = () => {
     trackWhatsAppClick({
@@ -55,15 +75,6 @@ export function ProductCard({ product }: ProductCardProps) {
       quantity: defaultQty,
       sourcePage: 'product_card',
     });
-  };
-
-  const handleCopyMessage = () => {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(orderMessage).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      });
-    }
   };
 
   return (
@@ -111,42 +122,52 @@ export function ProductCard({ product }: ProductCardProps) {
             </p>
           )}
 
-          <div className="mt-auto pt-3 space-y-2.5">
-            <p className="text-sm font-semibold text-[#202020] tabular-nums">
-              {product.unitPrice !== null
-                ? formatRwf(product.unitPrice)
-                : 'Price on Request'}
-            </p>
+          <div className="mt-auto pt-3 space-y-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-sm font-semibold text-[#202020] tabular-nums">
+                {formatRwf(product.unitPrice)}
+              </p>
+              {existingQty > 0 && (
+                <button
+                  type="button"
+                  onClick={openDrawer}
+                  className="text-[11px] font-semibold text-[#8C6843] hover:underline tabular-nums whitespace-nowrap"
+                >
+                  In My Order ({existingQty})
+                </button>
+              )}
+            </div>
 
-            {whatsappUrl ? (
-              <a
-                href={whatsappUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={handleTrackOrderClick}
-                className="w-full py-2.5 px-3 text-xs font-semibold uppercase tracking-wide bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
-              >
-                <MessageCircle className="w-3.5 h-3.5 text-[#B58B61]" />
-                ORDER NOW
-              </a>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  handleTrackOrderClick();
-                  setFallbackOpen(true);
-                }}
-                className="w-full py-2.5 px-3 text-xs font-semibold uppercase tracking-wide bg-[#202020] text-[#FFFFFF] rounded-md hover:bg-[#333333] transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
-              >
-                <MessageCircle className="w-3.5 h-3.5 text-[#B58B61]" />
-                ORDER NOW
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleAddToOrder}
+              className={`w-full py-2.5 px-3 text-xs font-semibold uppercase tracking-wide rounded-md transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                justAdded
+                  ? 'bg-[#B58B61] text-[#FFFFFF]'
+                  : 'bg-[#202020] text-[#FFFFFF] hover:bg-[#333333]'
+              }`}
+            >
+              {justAdded ? (
+                <Check className="w-3.5 h-3.5" />
+              ) : (
+                <Plus className="w-3.5 h-3.5 text-[#B58B61]" />
+              )}
+              {justAdded ? 'Added to Order' : 'Add to Order'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setOrderModalOpen(true)}
+              className="w-full py-2 px-3 text-xs font-semibold uppercase tracking-wide border border-[#202020]/20 text-[#202020] rounded-md hover:bg-[#FAF7F2] hover:border-[#B58B61] transition-colors inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+            >
+              <MessageCircle className="w-3.5 h-3.5 text-[#B58B61]" />
+              ORDER NOW
+            </button>
 
             <button
               type="button"
               onClick={() => navigate(`/products/${product.slug}`)}
-              className="w-full py-1.5 text-xs font-medium text-[#202020]/70 hover:text-[#B58B61] transition-colors text-center"
+              className="w-full py-1 text-xs font-medium text-[#202020]/70 hover:text-[#B58B61] transition-colors text-center"
             >
               Select Options & Specifications
             </button>
@@ -154,56 +175,22 @@ export function ProductCard({ product }: ProductCardProps) {
         </div>
       </article>
 
-      {fallbackOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-[#202020]/60 flex items-center justify-center p-4"
-          onClick={() => setFallbackOpen(false)}
-        >
-          <div
-            className="bg-[#FFFFFF] rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-[#202020]/10">
-              <h3 className="text-base font-bold text-[#202020]">
-                Order Message Ready
-              </h3>
-              <button
-                type="button"
-                onClick={() => setFallbackOpen(false)}
-                className="p-1 text-[#202020]/60"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-xs text-[#202020]/75">
-              Our WhatsApp Business number has not been configured in System Settings yet. Copy your order summary below or contact our team directly.
-            </p>
-            <pre className="p-3 bg-[#F5F5F5] border border-[#202020]/10 rounded-md text-xs text-[#202020] whitespace-pre-wrap font-sans">
-              {orderMessage}
-            </pre>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleCopyMessage}
-                className="px-4 py-2 text-xs font-semibold border border-[#202020]/20 rounded-md inline-flex items-center gap-1.5"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-700" /> : <Copy className="w-3.5 h-3.5" />}
-                {copied ? 'Copied' : 'Copy Order Message'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setFallbackOpen(false);
-                  navigate('/contact');
-                }}
-                className="px-4 py-2 text-xs font-semibold bg-[#202020] text-[#FFFFFF] rounded-md"
-              >
-                Contact Us
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <OrderMessageModal
+        open={orderModalOpen}
+        onClose={() => setOrderModalOpen(false)}
+        title="Order Message Ready"
+        productName={product.name}
+        sku={product.sku}
+        selectedSize={defaultSize}
+        selectedVariation={defaultVariation}
+        unitPrice={product.unitPrice}
+        quantity={defaultQty}
+        packagingUnit={defaultUnit}
+        currency={settings?.currency || 'RWF'}
+        message={orderMessage}
+        whatsappUrl={whatsappUrl}
+        onSendClick={handleTrackOrderClick}
+      />
     </>
   );
 }

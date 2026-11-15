@@ -1,6 +1,8 @@
 export function formatRwf(amount: number | null | undefined): string {
-  if (amount === null || amount === undefined) return 'Price on Request';
-  return `RWF ${amount.toLocaleString('en-US')}`;
+  if (amount === null || amount === undefined || Number.isNaN(Number(amount))) {
+    return 'Price on Request';
+  }
+  return `RWF ${Math.round(Number(amount)).toLocaleString('en-US')}`;
 }
 
 export function formatDate(iso: string | Date | undefined | null): string {

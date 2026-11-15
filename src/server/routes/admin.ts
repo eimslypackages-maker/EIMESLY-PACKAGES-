@@ -23,11 +23,11 @@ import {
 } from '../../db/seed.ts';
 import { hashPassword } from '../../lib/auth-crypto.ts';
 import {
-  AuthRequest,
+  type AuthRequest,
   requireAuth,
   requireRole,
   STAFF_ROLES,
-  UserRole,
+  type UserRole,
 } from '../../middleware/auth.ts';
 import { recordAuditLog } from '../audit.ts';
 
@@ -317,6 +317,381 @@ adminRouter.get('/overview', async (_req, res) => {
   } catch (err) {
     console.error('Admin overview failed:', err);
     res.status(500).json({ error: 'Failed to load dashboard overview' });
+  }
+});
+
+// 1b. Dedicated WhatsApp Enquiry & Popularity Analytics
+adminRouter.get('/whatsapp-analytics', async (req, res) => {
+  try {
+    const daysParam = String(req.query.days || '30');
+    const categoryIdParam = String(req.query.categoryId || 'all');
+    const eventTypeParam = String(req.query.eventType || 'all');
+
+    const [allClicks, allProducts, allCategories, allOrders, allOrderItems] =
+      await Promise.all([
+        db.select().from(whatsappClicks).orderBy(desc(whatsappClicks.createdAt)),
+        db.select().from(products),
+        db.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.id)),
+        db.select().from(orders),
+        db.select().from(orderItems),
+      ]);
+
+    const prodById = new Map(allProducts.map((p) => [p.id, p]));
+    const prodBySku = new Map(
+      allProducts.filter((p) => p.sku).map((p) => [p.sku.toLowerCase(), p])
+    );
+    const catById = new Map(allCategories.map((c) => [c.id, c]));
+
+    let cutoffDate: Date | null = null;
+    if (daysParam !== 'all') {
+      const n = Math.max(1, Math.min(365, Number(daysParam) || 30));
+      cutoffDate = new Date();
+      cutoffDate.setHours(0, 0, 0, 0);
+      cutoffDate.setDate(cutoffDate.getDate() - (n - 1));
+    }
+
+    const activeOrderIds = new Set(
+      allOrders
+        .filter((o) => {
+          if (o.orderStatus === 'cancelled') return false;
+          if (cutoffDate && new Date(o.createdAt) < cutoffDate) return false;
+          return true;
+        })
+        .map((o) => o.id)
+    );
+
+    const resolveProduct = (
+      productId: number | null | undefined,
+      sku?: string | null
+    ) => {
+      if (productId && prodById.has(productId)) return prodById.get(productId);
+      if (sku && prodBySku.has(sku.toLowerCase())) {
+        return prodBySku.get(sku.toLowerCase());
+      }
+      return undefined;
+    };
+
+    // Correlate confirmed sales per product & per category
+    const salesByProductKey = new Map<string, { units: number; revenue: number }>();
+    const salesByCategoryId = new Map<string, { units: number; revenue: number }>();
+    let confirmedOrderRevenue = 0;
+    let confirmedOrderUnits = 0;
+
+    for (const it of allOrderItems) {
+      if (!activeOrderIds.has(it.orderId)) continue;
+      confirmedOrderUnits += it.quantity;
+      confirmedOrderRevenue += it.lineTotal;
+
+      const prod = resolveProduct(it.productId, it.sku);
+      const prodKey = prod ? `id:${prod.id}` : `name:${it.sku || it.productName}`;
+      const pSale = salesByProductKey.get(prodKey) || { units: 0, revenue: 0 };
+      pSale.units += it.quantity;
+      pSale.revenue += it.lineTotal;
+      salesByProductKey.set(prodKey, pSale);
+
+      const catKey =
+        prod?.categoryId && catById.has(prod.categoryId)
+          ? String(prod.categoryId)
+          : 'uncategorized';
+      const cSale = salesByCategoryId.get(catKey) || { units: 0, revenue: 0 };
+      cSale.units += it.quantity;
+      cSale.revenue += it.lineTotal;
+      salesByCategoryId.set(catKey, cSale);
+    }
+
+    // Filter clicks
+    const filteredClicks = allClicks.filter((c) => {
+      if (cutoffDate && new Date(c.createdAt) < cutoffDate) return false;
+      if (eventTypeParam !== 'all' && c.eventType !== eventTypeParam) {
+        return false;
+      }
+      if (categoryIdParam !== 'all') {
+        const prod = resolveProduct(c.productId, c.sku);
+        const resolvedCatId = prod?.categoryId ? String(prod.categoryId) : 'uncategorized';
+        if (resolvedCatId !== categoryIdParam) return false;
+      }
+      return true;
+    });
+
+    const totalClicks = filteredClicks.length;
+    const productOrderClicks = filteredClicks.filter(
+      (c) => c.eventType === 'product_order'
+    ).length;
+    const wholesaleQuoteClicks = filteredClicks.filter(
+      (c) => c.eventType === 'wholesale_quote'
+    ).length;
+    const whatsappContactClicks = filteredClicks.filter(
+      (c) => c.eventType === 'whatsapp_contact'
+    ).length;
+    const totalRequestedQuantity = filteredClicks.reduce(
+      (sum, c) => sum + (c.productName ? Math.max(1, c.quantity || 1) : 0),
+      0
+    );
+
+    // Daily trends (always show continuous daily buckets; 14d or 30d window for readability)
+    const chartDays =
+      daysParam === '7' ? 7 : daysParam === '14' ? 14 : 30;
+    const trendMap = new Map<
+      string,
+      {
+        date: string;
+        label: string;
+        productOrder: number;
+        wholesaleQuote: number;
+        contact: number;
+        total: number;
+        requestedQty: number;
+      }
+    >();
+    for (let i = chartDays - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const iso = d.toISOString().slice(0, 10);
+      trendMap.set(iso, {
+        date: iso,
+        label: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+        productOrder: 0,
+        wholesaleQuote: 0,
+        contact: 0,
+        total: 0,
+        requestedQty: 0,
+      });
+    }
+    for (const c of filteredClicks) {
+      const iso = new Date(c.createdAt).toISOString().slice(0, 10);
+      const bucket = trendMap.get(iso);
+      if (bucket) {
+        bucket.total += 1;
+        if (c.productName) bucket.requestedQty += Math.max(1, c.quantity || 1);
+        if (c.eventType === 'product_order') bucket.productOrder += 1;
+        else if (c.eventType === 'wholesale_quote') bucket.wholesaleQuote += 1;
+        else bucket.contact += 1;
+      }
+    }
+
+    // Aggregate by product and by category
+    const productAgg = new Map<
+      string,
+      {
+        productId: number | null;
+        productName: string;
+        sku: string;
+        categoryName: string;
+        unitPrice: number | null;
+        stockQuantity: number;
+        availabilityStatus: string;
+        orderClicks: number;
+        quoteClicks: number;
+        totalClicks: number;
+        totalQuantityRequested: number;
+        sizeCounts: Map<string, number>;
+        recordedUnitsSold: number;
+        recordedRevenue: number;
+      }
+    >();
+
+    const categoryAgg = new Map<
+      string,
+      {
+        categoryId: number | null;
+        categoryName: string;
+        totalClicks: number;
+        productOrderClicks: number;
+        wholesaleQuoteClicks: number;
+        totalQuantityRequested: number;
+        productKeys: Set<string>;
+        recordedUnitsSold: number;
+        recordedRevenue: number;
+      }
+    >();
+
+    const sourceMap = new Map<string, number>();
+
+    const normalizeSourceLabel = (src: string): string => {
+      const s = (src || '').trim();
+      if (!s) return 'Other';
+      if (s === '/') return 'Home Page';
+      if (s === '/shop') return 'Shop Catalogue';
+      if (s === '/wholesale' || s === 'wholesale_page') return 'Wholesale Page';
+      if (s === '/contact' || s === 'contact_page') return 'Contact Page';
+      if (s === 'product_card') return 'Product Cards';
+      if (s === 'product_detail' || s.startsWith('/products/')) return 'Product Detail Page';
+      if (s.startsWith('/categories/')) return 'Category Page';
+      if (s === 'navbar') return 'Top Navigation';
+      if (s === 'footer') return 'Footer';
+      return s;
+    };
+
+    for (const c of filteredClicks) {
+      const srcLabel = normalizeSourceLabel(c.sourcePage);
+      sourceMap.set(srcLabel, (sourceMap.get(srcLabel) || 0) + 1);
+
+      if (!c.productName) continue;
+      const prod = resolveProduct(c.productId, c.sku);
+      const cat =
+        prod?.categoryId && catById.has(prod.categoryId)
+          ? catById.get(prod.categoryId)
+          : undefined;
+      const categoryName = cat?.name ?? 'General / Uncategorized';
+      const catKey = cat ? String(cat.id) : 'uncategorized';
+
+      const prodKey = prod ? `id:${prod.id}` : `name:${c.sku || c.productName}`;
+      const existingProd = productAgg.get(prodKey) || {
+        productId: prod?.id ?? c.productId ?? null,
+        productName: prod?.name ?? c.productName,
+        sku: prod?.sku ?? c.sku,
+        categoryName,
+        unitPrice: prod?.unitPrice ?? null,
+        stockQuantity: prod?.stockQuantity ?? 0,
+        availabilityStatus: prod?.availabilityStatus ?? 'in_stock',
+        orderClicks: 0,
+        quoteClicks: 0,
+        totalClicks: 0,
+        totalQuantityRequested: 0,
+        sizeCounts: new Map<string, number>(),
+        recordedUnitsSold: salesByProductKey.get(prodKey)?.units ?? 0,
+        recordedRevenue: salesByProductKey.get(prodKey)?.revenue ?? 0,
+      };
+      existingProd.totalClicks += 1;
+      existingProd.totalQuantityRequested += Math.max(1, c.quantity || 1);
+      if (c.eventType === 'product_order') existingProd.orderClicks += 1;
+      if (c.eventType === 'wholesale_quote') existingProd.quoteClicks += 1;
+      if (c.selectedSize) {
+        existingProd.sizeCounts.set(
+          c.selectedSize,
+          (existingProd.sizeCounts.get(c.selectedSize) || 0) + 1
+        );
+      }
+      productAgg.set(prodKey, existingProd);
+
+      const catSale = salesByCategoryId.get(catKey) || { units: 0, revenue: 0 };
+      const existingCat = categoryAgg.get(catKey) || {
+        categoryId: cat?.id ?? null,
+        categoryName,
+        totalClicks: 0,
+        productOrderClicks: 0,
+        wholesaleQuoteClicks: 0,
+        totalQuantityRequested: 0,
+        productKeys: new Set<string>(),
+        recordedUnitsSold: catSale.units,
+        recordedRevenue: catSale.revenue,
+      };
+      existingCat.totalClicks += 1;
+      existingCat.totalQuantityRequested += Math.max(1, c.quantity || 1);
+      if (c.eventType === 'product_order') existingCat.productOrderClicks += 1;
+      if (c.eventType === 'wholesale_quote') existingCat.wholesaleQuoteClicks += 1;
+      existingCat.productKeys.add(prodKey);
+      categoryAgg.set(catKey, existingCat);
+    }
+
+    const totalProductClicks = Array.from(categoryAgg.values()).reduce(
+      (s, c) => s + c.totalClicks,
+      0
+    );
+
+    const popularCategories = Array.from(categoryAgg.values())
+      .map((c) => ({
+        categoryId: c.categoryId,
+        categoryName: c.categoryName,
+        totalClicks: c.totalClicks,
+        productOrderClicks: c.productOrderClicks,
+        wholesaleQuoteClicks: c.wholesaleQuoteClicks,
+        totalQuantityRequested: c.totalQuantityRequested,
+        uniqueProducts: c.productKeys.size,
+        sharePercent:
+          totalProductClicks > 0
+            ? Math.round((c.totalClicks / totalProductClicks) * 100)
+            : 0,
+        recordedUnitsSold: c.recordedUnitsSold,
+        recordedRevenue: c.recordedRevenue,
+      }))
+      .sort((a, b) => b.totalClicks - a.totalClicks);
+
+    const topEnquiredProducts = Array.from(productAgg.values())
+      .map((p) => {
+        const topSizes = Array.from(p.sizeCounts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([size, count]) => `${size} (${count})`);
+        return {
+          productId: p.productId,
+          productName: p.productName,
+          sku: p.sku,
+          categoryName: p.categoryName,
+          unitPrice: p.unitPrice,
+          stockQuantity: p.stockQuantity,
+          availabilityStatus: p.availabilityStatus,
+          orderClicks: p.orderClicks,
+          quoteClicks: p.quoteClicks,
+          totalClicks: p.totalClicks,
+          totalQuantityRequested: p.totalQuantityRequested,
+          avgQuantityPerClick:
+            p.totalClicks > 0
+              ? Number((p.totalQuantityRequested / p.totalClicks).toFixed(1))
+              : 0,
+          topSizes,
+          recordedUnitsSold: p.recordedUnitsSold,
+          recordedRevenue: p.recordedRevenue,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.totalClicks - a.totalClicks ||
+          b.totalQuantityRequested - a.totalQuantityRequested
+      );
+
+    const sourceBreakdown = Array.from(sourceMap.entries())
+      .map(([source, clicks]) => ({
+        source,
+        clicks,
+        sharePercent: totalClicks > 0 ? Math.round((clicks / totalClicks) * 100) : 0,
+      }))
+      .sort((a, b) => b.clicks - a.clicks);
+
+    const recentEvents = filteredClicks.slice(0, 25).map((c) => {
+      const prod = resolveProduct(c.productId, c.sku);
+      const cat =
+        prod?.categoryId && catById.has(prod.categoryId)
+          ? catById.get(prod.categoryId)
+          : undefined;
+      return {
+        id: c.id,
+        eventType: c.eventType,
+        productName: c.productName || 'General Enquiry',
+        sku: c.sku,
+        categoryName: c.productName ? (cat?.name ?? 'Uncategorized') : 'General',
+        selectedSize: c.selectedSize,
+        quantity: c.quantity,
+        sourcePage: normalizeSourceLabel(c.sourcePage),
+        createdAt: c.createdAt,
+      };
+    });
+
+    res.json({
+      summary: {
+        totalClicks,
+        productOrderClicks,
+        wholesaleQuoteClicks,
+        whatsappContactClicks,
+        totalRequestedQuantity,
+        uniqueProductsEnquired: topEnquiredProducts.length,
+        topCategoryName: popularCategories[0]?.categoryName ?? '—',
+        topCategoryClicks: popularCategories[0]?.totalClicks ?? 0,
+        topProductName: topEnquiredProducts[0]?.productName ?? '—',
+        topProductClicks: topEnquiredProducts[0]?.totalClicks ?? 0,
+        confirmedOrderRevenue,
+        confirmedOrderUnits,
+      },
+      dailyTrends: Array.from(trendMap.values()),
+      popularCategories,
+      topEnquiredProducts,
+      sourceBreakdown,
+      recentEvents,
+      categories: allCategories.map((c) => ({ id: c.id, name: c.name })),
+    });
+  } catch (err) {
+    console.error('WhatsApp analytics failed:', err);
+    res.status(500).json({ error: 'Failed to load WhatsApp analytics' });
   }
 });
 

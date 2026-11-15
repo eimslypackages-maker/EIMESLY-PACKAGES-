@@ -2,5 +2,7 @@
   "name": "Eimesly Packages",
   "description": "Smart Packaging Solutions for Every Business in Kigali, Rwanda. Wholesale and retail food packaging, coffee cups, drinking straws, and takeaway containers by EIMESLY LTD.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

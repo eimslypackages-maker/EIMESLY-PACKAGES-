@@ -446,8 +446,8 @@ export function AdminOverview() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => navigate('/admin/reports')}
-                  className="text-xs font-semibold text-[#B58B61]"
+                  onClick={() => navigate('/admin/whatsapp-analytics')}
+                  className="text-xs font-semibold text-[#B58B61] hover:underline"
                 >
                   Details
                 </button>

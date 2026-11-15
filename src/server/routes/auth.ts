@@ -8,7 +8,7 @@ import {
   signSessionToken,
   verifyPassword,
 } from '../../lib/auth-crypto.ts';
-import { AuthRequest, requireAuth, STAFF_ROLES } from '../../middleware/auth.ts';
+import { type AuthRequest, requireAuth, STAFF_ROLES } from '../../middleware/auth.ts';
 import { recordAuditLog } from '../audit.ts';
 
 export const authRouter = Router();

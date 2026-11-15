@@ -14,6 +14,7 @@ import {
   LogOut,
   Mail,
   Menu,
+  MessageCircle,
   Package,
   Palette,
   Settings,
@@ -45,6 +46,12 @@ const ADMIN_NAV: NavItem[] = [
     label: 'Dashboard Overview',
     to: '/admin/dashboard',
     icon: LayoutDashboard,
+    roles: STAFF_ROLES,
+  },
+  {
+    label: 'WhatsApp Analytics',
+    to: '/admin/whatsapp-analytics',
+    icon: MessageCircle,
     roles: STAFF_ROLES,
   },
   {
