@@ -46,18 +46,20 @@ interface AppContextValue {
   refreshBootstrap: () => Promise<void>;
 }
 
-const APP_BASE_PATH = '/EIMESLY-PACKAGES-';
+const APP_BASE_PATH = (import.meta.env.BASE_URL || '/').replace(/\/+$/, '');
 
 function getAppPath() {
   const pathname = window.location.pathname;
-  const appPath = pathname.startsWith(APP_BASE_PATH)
-    ? pathname.slice(APP_BASE_PATH.length) || '/'
-    : pathname;
+  const appPath =
+    APP_BASE_PATH && pathname.startsWith(APP_BASE_PATH)
+      ? pathname.slice(APP_BASE_PATH.length) || '/'
+      : pathname;
   return appPath + window.location.search;
 }
 
 function getBrowserPath(to: string) {
   const target = to.startsWith('/') ? to : `/${to}`;
+  if (!APP_BASE_PATH) return target;
   return `${APP_BASE_PATH}${target === '/' ? '/' : target}`;
 }
 

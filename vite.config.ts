@@ -1,12 +1,12 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import { defineConfig } from 'vite';
 
 export default defineConfig(() => {
   return {
-    // GitHub Pages project-site path
-    base: '/EIMESLY-PACKAGES-/',
+    // Defaults to '/' for Cloud Run & local dev; GitHub Pages sets VITE_BASE_PATH='/<repo>/'
+    base: process.env.VITE_BASE_PATH || '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

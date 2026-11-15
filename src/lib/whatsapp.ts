@@ -3,6 +3,7 @@ import type {
   WebsiteSettings,
   WhatsAppClickEventType,
 } from '../shared/types';
+import { resolveApiUrl } from './api';
 
 export function sanitizeWhatsAppPhone(
   countryCode?: string,
@@ -367,12 +368,13 @@ export function trackWhatsAppClick(payload: {
 }) {
   try {
     const body = JSON.stringify(payload);
+    const endpoint = resolveApiUrl('/api/analytics/whatsapp-click');
     if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
       const blob = new Blob([body], { type: 'application/json' });
-      navigator.sendBeacon('/api/analytics/whatsapp-click', blob);
+      navigator.sendBeacon(endpoint, blob);
       return;
     }
-    fetch('/api/analytics/whatsapp-click', {
+    fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,

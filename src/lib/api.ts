@@ -48,6 +48,17 @@ export async function getActiveAuthToken(): Promise<string | null> {
   return null;
 }
 
+export const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL || ''
+).replace(/\/+$/, '');
+
+export function resolveApiUrl(path: string): string {
+  if (!API_BASE_URL) return path;
+  if (/^https?:\/\//i.test(path)) return path;
+  if (path.startsWith('/')) return `${API_BASE_URL}${path}`;
+  return `${API_BASE_URL}/${path}`;
+}
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
@@ -61,7 +72,7 @@ export async function apiFetch<T>(
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const res = await fetch(path, {
+  const res = await fetch(resolveApiUrl(path), {
     ...options,
     headers,
   });

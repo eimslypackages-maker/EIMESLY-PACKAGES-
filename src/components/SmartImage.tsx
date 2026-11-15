@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Package } from 'lucide-react';
+import { resolveApiUrl } from '../lib/api';
 
 interface SmartImageProps {
   src?: string | null;
@@ -33,9 +34,15 @@ export function SmartImage({
     );
   }
 
+  const resolvedSrc = src.startsWith('/api/')
+    ? resolveApiUrl(src)
+    : src.startsWith('/src/assets/') && import.meta.env.BASE_URL !== '/'
+      ? `${import.meta.env.BASE_URL.replace(/\/+$/, '')}${src}`
+      : src;
+
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt={alt}
       referrerPolicy="no-referrer"
       loading={eager ? 'eager' : 'lazy'}

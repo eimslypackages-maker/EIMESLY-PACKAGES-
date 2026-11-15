@@ -17,6 +17,34 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+  const allowedOrigins = (process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  app.use('/api', (req, res, next) => {
+    const origin = req.headers.origin;
+    if (
+      origin &&
+      (allowedOrigins.includes('*') ||
+        allowedOrigins.includes(origin) ||
+        /^https:\/\/[a-z0-9-]+\.github\.io$/i.test(origin))
+    ) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader(
+        'Access-Control-Allow-Methods',
+        'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+      );
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type,Authorization'
+      );
+      if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+      }
+    }
+    next();
+  });
+
   // Serve generated studio assets cleanly in both dev and production
   app.use(
     '/src/assets',
