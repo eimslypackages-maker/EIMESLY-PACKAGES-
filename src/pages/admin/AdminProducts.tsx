@@ -5,6 +5,7 @@ import { apiFetch } from '../../lib/api';
 import { AVAILABILITY_LABELS, formatRwf } from '../../lib/format';
 import { uploadImageFile } from '../../lib/upload';
 import { SmartImage } from '../../components/SmartImage';
+import { ConfirmDeleteModal } from '../../components/ConfirmDeleteModal';
 import { AdminLayout } from './AdminLayout';
 import type { AvailabilityStatus, Category, Product } from '../../shared/types';
 
@@ -65,7 +66,9 @@ export function AdminProducts() {
   const [form, setForm] = useState<ProductFormState>(EMPTY_FORM);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [error, setError] = useState('');
 
   useDocumentMeta('Product Management | Eimesly Packages Admin');
@@ -205,14 +208,24 @@ export function AdminProducts() {
     }
   };
 
-  const handleDelete = async (p: Product) => {
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
     try {
-      await apiFetch(`/api/admin/products/${p.id}`, { method: 'DELETE' });
-      setConfirmDeleteId(null);
+      await apiFetch(`/api/admin/products/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+      setProducts((prev) => prev.filter((item) => item.id !== deleteTarget.id));
+      setDeleteTarget(null);
       await loadData();
       await refreshBootstrap();
-    } catch (err) {
-      console.error(err);
+    } catch (err: unknown) {
+      setDeleteError(
+        err instanceof Error ? err.message : 'Failed to delete product'
+      );
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -314,33 +327,17 @@ export function AdminProducts() {
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
-                          {confirmDeleteId === p.id ? (
-                            <span className="inline-flex items-center gap-1 ml-1">
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(p)}
-                                className="px-2 py-0.5 text-[11px] font-semibold bg-red-600 text-white rounded"
-                              >
-                                Confirm
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setConfirmDeleteId(null)}
-                                className="px-2 py-0.5 text-[11px] border border-[#202020]/20 rounded"
-                              >
-                                Cancel
-                              </button>
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteId(p.id)}
-                              aria-label={`Delete ${p.name}`}
-                              className="p-1.5 text-[#202020]/50 hover:text-red-600"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteError('');
+                              setDeleteTarget(p);
+                            }}
+                            aria-label={`Delete ${p.name}`}
+                            className="p-1.5 text-[#202020]/50 hover:text-red-600"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -687,6 +684,24 @@ export function AdminProducts() {
           </div>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        title="Delete Product"
+        itemLabel={
+          deleteTarget ? `${deleteTarget.name} (SKU: ${deleteTarget.sku})` : ''
+        }
+        description="Deleting this product will permanently remove it from the Eimesly Packages catalogue, search results, and featured sections, along with its inventory movement history."
+        deleting={deleting}
+        error={deleteError}
+        onCancel={() => {
+          if (!deleting) {
+            setDeleteTarget(null);
+            setDeleteError('');
+          }
+        }}
+        onConfirm={handleConfirmDelete}
+      />
     </AdminLayout>
   );
 }

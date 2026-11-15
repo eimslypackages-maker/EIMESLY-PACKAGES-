@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Download, Edit2, Eye, X } from 'lucide-react';
+import { Download, Edit2, Eye, Trash2, X } from 'lucide-react';
 import { useDocumentMeta } from '../../context/AppContext';
 import { apiFetch } from '../../lib/api';
+import { ConfirmDeleteModal } from '../../components/ConfirmDeleteModal';
 import {
   downloadCsv,
   formatDate,
@@ -17,6 +18,9 @@ export function AdminEnquiries() {
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Enquiry | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   useDocumentMeta('Customer & Wholesale Enquiries | Eimesly Packages Admin');
 
@@ -53,6 +57,28 @@ export function AdminEnquiries() {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await apiFetch(`/api/admin/enquiries/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+      setEnquiries((prev) =>
+        prev.filter((item) => item.id !== deleteTarget.id)
+      );
+      setDeleteTarget(null);
+      await load();
+    } catch (err: unknown) {
+      setDeleteError(
+        err instanceof Error ? err.message : 'Failed to delete enquiry'
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <AdminLayout title="Customer & Wholesale Enquiries">
       <div className="space-y-4">
@@ -84,18 +110,32 @@ export function AdminEnquiries() {
                   </p>
                 </div>
 
-                <select
-                  value={eq.status}
-                  disabled={savingId === eq.id}
-                  onChange={(e) =>
-                    updateEnquiry(eq.id, e.target.value, eq.adminNotes)
-                  }
-                  className="px-3 py-1.5 text-xs font-semibold border border-[#202020]/20 rounded-md bg-[#FFFFFF]"
-                >
-                  <option value="new">New</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="resolved">Resolved</option>
-                </select>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={eq.status}
+                    disabled={savingId === eq.id}
+                    onChange={(e) =>
+                      updateEnquiry(eq.id, e.target.value, eq.adminNotes)
+                    }
+                    className="px-3 py-1.5 text-xs font-semibold border border-[#202020]/20 rounded-md bg-[#FFFFFF]"
+                  >
+                    <option value="new">New</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="resolved">Resolved</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteError('');
+                      setDeleteTarget(eq);
+                    }}
+                    aria-label={`Delete enquiry ${eq.subject}`}
+                    title="Delete enquiry permanently"
+                    className="p-1.5 text-[#202020]/50 hover:text-red-600"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
 
               <p className="text-sm text-[#202020]/85 bg-[#F5F5F5] p-3.5 rounded-md">
@@ -105,6 +145,26 @@ export function AdminEnquiries() {
           ))
         )}
       </div>
+
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        title="Delete Customer Enquiry"
+        itemLabel={
+          deleteTarget
+            ? `${deleteTarget.subject} — ${deleteTarget.fullName}`
+            : ''
+        }
+        description="Deleting this enquiry permanently removes the customer message and status history from the database."
+        deleting={deleting}
+        error={deleteError}
+        onCancel={() => {
+          if (!deleting) {
+            setDeleteTarget(null);
+            setDeleteError('');
+          }
+        }}
+        onConfirm={handleConfirmDelete}
+      />
     </AdminLayout>
   );
 }

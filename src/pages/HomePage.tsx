@@ -14,31 +14,16 @@ import {
   trackWhatsAppClick,
 } from '../lib/whatsapp';
 import { ProductCard } from '../components/ProductCard';
-import { SAMPLE_PRODUCTS } from '../data/sampleProducts';
 import { SmartImage } from '../components/SmartImage';
 import heroPackagingImage from '../assets/images/hero_packaging_collection_1794679094459.jpg';
 import paperBagsImage from '../assets/images/cat_paper_bags_1794679095036.jpg';
-import coffeeCupsImage from '../assets/images/cat_coffee_cups_1794679093987.jpg';
-import takeawayContainersImage from '../assets/images/cat_takeaway_containers_1794679094185.jpg';
-import drinkingStrawsImage from '../assets/images/cat_drinking_straws_1794679094373.jpg';
-import cutleryNapkinsImage from '../assets/images/cat_cutlery_napkins_1794679095359.jpg';
 
 export function HomePage() {
   const { navigate, bootstrap, bootstrapLoading } = useApp();
   const content = bootstrap?.content;
   const settings = bootstrap?.settings;
-  const categories = bootstrap?.categories?.length
-    ? bootstrap.categories
-    : [
-        { id: 1, name: 'Coffee Cups', slug: 'coffee-cups', description: 'Hot and cold drink cups for cafés and hospitality businesses.', imageUrl: coffeeCupsImage },
-        { id: 2, name: 'Takeaway Containers', slug: 'takeaway-containers', description: 'Food containers for takeaway, delivery, and catering.', imageUrl: takeawayContainersImage },
-        { id: 3, name: 'Drinking Straws', slug: 'drinking-straws', description: 'Drinking straws for cafés, restaurants, and events.', imageUrl: drinkingStrawsImage },
-        { id: 4, name: 'Paper Bags', slug: 'paper-bags', description: 'Carrier bags for food service and retail packaging.', imageUrl: paperBagsImage },
-        { id: 5, name: 'Cutlery & Napkins', slug: 'cutlery-napkins', description: 'Food-service cutlery and napkins for everyday use.', imageUrl: cutleryNapkinsImage },
-      ];
-  const featuredProducts = bootstrap?.featuredProducts?.length
-    ? bootstrap.featuredProducts
-    : SAMPLE_PRODUCTS;
+  const categories = bootstrap?.categories || [];
+  const featuredProducts = bootstrap?.featuredProducts || [];
 
   useDocumentMeta(
     content?.seoTitle || 'Eimesly Packages – Smart Packaging Solutions for Every Business',
@@ -254,6 +239,12 @@ export function HomePage() {
                   className="aspect-[4/3] rounded-lg bg-[#F5F5F5] animate-pulse"
                 />
               ))}
+            </div>
+          ) : categories.length === 0 ? (
+            <div className="bg-[#F5F5F5] border border-[#202020]/10 rounded-lg p-10 text-center">
+              <p className="text-sm text-[#202020]/70">
+                No product categories are currently published.
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">

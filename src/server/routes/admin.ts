@@ -33,6 +33,11 @@ import { recordAuditLog } from '../audit.ts';
 
 export const adminRouter = Router();
 
+adminRouter.use((_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  next();
+});
+
 adminRouter.use(requireAuth, requireRole(STAFF_ROLES));
 
 function slugify(input: string): string {
@@ -1394,6 +1399,46 @@ adminRouter.put(
   }
 );
 
+adminRouter.delete(
+  '/orders/:id',
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
+  async (req: AuthRequest, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'Invalid order ID' });
+      }
+      await db
+        .update(quotations)
+        .set({ convertedOrderId: null })
+        .where(eq(quotations.convertedOrderId, id));
+
+      const [deleted] = await db
+        .delete(orders)
+        .where(eq(orders.id, id))
+        .returning();
+      if (!deleted) return res.status(404).json({ error: 'Order not found' });
+
+      await recordAuditLog({
+        actor: req.appUser,
+        action: 'delete_order',
+        entityType: 'order',
+        entityId: deleted.orderNumber,
+        details: {
+          orderNumber: deleted.orderNumber,
+          customerName: deleted.customerName,
+          totalAmount: deleted.totalAmount,
+        },
+      });
+
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Delete order failed:', err);
+      res.status(500).json({ error: 'Failed to delete order' });
+    }
+  }
+);
+
 // 5. Quotation Management
 adminRouter.get(
   '/quotations',
@@ -1728,6 +1773,42 @@ adminRouter.post(
   }
 );
 
+adminRouter.delete(
+  '/quotations/:id',
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
+  async (req: AuthRequest, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'Invalid quotation ID' });
+      }
+      const [deleted] = await db
+        .delete(quotations)
+        .where(eq(quotations.id, id))
+        .returning();
+      if (!deleted) {
+        return res.status(404).json({ error: 'Quotation not found' });
+      }
+
+      await recordAuditLog({
+        actor: req.appUser,
+        action: 'delete_quotation',
+        entityType: 'quotation',
+        entityId: deleted.quoteNumber,
+        details: {
+          quoteNumber: deleted.quoteNumber,
+          customerName: deleted.customerName,
+        },
+      });
+
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Delete quotation failed:', err);
+      res.status(500).json({ error: 'Failed to delete quotation' });
+    }
+  }
+);
+
 
 
 // 6. Enquiries Management
@@ -1778,6 +1859,42 @@ adminRouter.put(
     } catch (err) {
       console.error('Update enquiry failed:', err);
       res.status(400).json({ error: 'Failed to update enquiry' });
+    }
+  }
+);
+
+adminRouter.delete(
+  '/enquiries/:id',
+  requireRole(['super_admin', 'business_owner', 'business_manager']),
+  async (req: AuthRequest, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'Invalid enquiry ID' });
+      }
+      const [deleted] = await db
+        .delete(enquiries)
+        .where(eq(enquiries.id, id))
+        .returning();
+      if (!deleted) {
+        return res.status(404).json({ error: 'Enquiry not found' });
+      }
+
+      await recordAuditLog({
+        actor: req.appUser,
+        action: 'delete_enquiry',
+        entityType: 'enquiry',
+        entityId: id,
+        details: {
+          subject: deleted.subject,
+          fullName: deleted.fullName,
+        },
+      });
+
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Delete enquiry failed:', err);
+      res.status(500).json({ error: 'Failed to delete enquiry' });
     }
   }
 );
@@ -2480,12 +2597,19 @@ adminRouter.delete(
   async (req: AuthRequest, res) => {
     try {
       const id = Number(req.params.id);
-      await db.delete(mediaAssets).where(eq(mediaAssets.id, id));
+      const [deleted] = await db
+        .delete(mediaAssets)
+        .where(eq(mediaAssets.id, id))
+        .returning({ id: mediaAssets.id, filename: mediaAssets.filename });
+      if (!deleted) {
+        return res.status(404).json({ error: 'Media asset not found' });
+      }
       await recordAuditLog({
         actor: req.appUser,
         action: 'delete_media',
         entityType: 'media',
         entityId: id,
+        details: { filename: deleted.filename },
       });
       res.json({ success: true });
     } catch (err) {

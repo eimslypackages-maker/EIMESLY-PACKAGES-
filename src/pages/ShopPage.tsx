@@ -9,7 +9,6 @@ import {
 import { useApp, useDocumentMeta } from '../context/AppContext';
 import { apiFetch } from '../lib/api';
 import { ProductCard } from '../components/ProductCard';
-import { SAMPLE_PRODUCTS } from '../data/sampleProducts';
 import type { Category, Product } from '../shared/types';
 
 interface ShopResponse {
@@ -130,25 +129,13 @@ export function ShopPage({ categorySlug = '' }: ShopPageProps) {
     if (categorySlug) navigate('/shop');
   };
 
-  const staticItems = SAMPLE_PRODUCTS.filter((product) => {
-    const matchesCategory = !selectedCategory || product.categorySlug === selectedCategory;
-    const term = search.trim().toLowerCase();
-    const matchesSearch =
-      !term ||
-      product.name.toLowerCase().includes(term) ||
-      product.description.toLowerCase().includes(term) ||
-      product.sku.toLowerCase().includes(term);
-    return matchesCategory && matchesSearch;
-  });
-  const items = data?.items?.length ? data.items : staticItems;
-  const pagination = data?.items?.length
-    ? data.pagination
-    : {
-        total: items.length,
-        page: 1,
-        limit: 20,
-        totalPages: 1,
-      };
+  const items = data?.items || [];
+  const pagination = data?.pagination || {
+    total: 0,
+    page: 1,
+    limit: 20,
+    totalPages: 1,
+  };
   const facets = data?.facets || { materials: [], sizes: [], brands: [] };
 
   const filterPanel = (

@@ -19,6 +19,13 @@ import { optionalAuth, type AuthRequest } from '../../middleware/auth.ts';
 
 export const publicRouter = Router();
 
+publicRouter.use((req, res, next) => {
+  if (req.method === 'GET' && !req.path.startsWith('/media/')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  }
+  next();
+});
+
 function sanitizePublicProduct<
   T extends { wholesalePrice: number | null; costPrice: number | null }
 >(p: T): T {

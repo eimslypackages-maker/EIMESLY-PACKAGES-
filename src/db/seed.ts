@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from './index.ts';
 import { categories, products, siteSettings } from './schema.ts';
 import type { WebsiteContent, WebsiteSettings } from '../shared/types.ts';
@@ -171,37 +171,49 @@ export async function ensureSeeded(): Promise<void> {
   if (seedPromise) return seedPromise;
   seedPromise = (async () => {
     try {
-      // Idempotently ensure all core categories exist
-      for (const cat of INITIAL_CATEGORIES) {
-        await db
-          .insert(categories)
-          .values(cat)
-          .onConflictDoNothing({ target: categories.slug });
-      }
+      const [sentinelRows, existingSettings, existingContent, catCountRows, prodCountRows] =
+        await Promise.all([
+          db
+            .select({ key: siteSettings.key })
+            .from(siteSettings)
+            .where(eq(siteSettings.key, 'bootstrap_initialized_v1'))
+            .limit(1),
+          db
+            .select({ key: siteSettings.key })
+            .from(siteSettings)
+            .where(eq(siteSettings.key, 'settings'))
+            .limit(1),
+          db
+            .select({ key: siteSettings.key })
+            .from(siteSettings)
+            .where(eq(siteSettings.key, 'content'))
+            .limit(1),
+          db.select({ count: sql<number>`count(*)::int` }).from(categories),
+          db.select({ count: sql<number>`count(*)::int` }).from(products),
+        ]);
 
-      // Refresh drinking-straws and cup-lids image/description if still using earlier seed defaults
-      await db
-        .update(categories)
-        .set({
-          description:
-            'Plastic and kraft paper drinking straws in standard iced drink, smoothie, boba, and individually wrapped formats.',
-          imageUrl: '/src/assets/images/plastic_drinking_straws_1794680182650.jpg',
-        })
-        .where(eq(categories.slug, 'drinking-straws'));
+      const isAlreadyInitialized =
+        sentinelRows.length > 0 ||
+        existingSettings.length > 0 ||
+        existingContent.length > 0 ||
+        (catCountRows[0]?.count ?? 0) > 0 ||
+        (prodCountRows[0]?.count ?? 0) > 0;
 
-      await db
-        .update(categories)
-        .set({
-          description:
-            'Hot coffee sip-through lids plus crystal-clear flat straw-slot and dome lids for plastic iced drink cups.',
-        })
-        .where(eq(categories.slug, 'cup-lids'));
+      if (!isAlreadyInitialized) {
+        // One-time initial setup for a brand-new empty database only.
+        // Never re-run after initialization so admin deletions and edits are preserved.
+        for (const cat of INITIAL_CATEGORIES) {
+          await db
+            .insert(categories)
+            .values(cat)
+            .onConflictDoNothing({ target: categories.slug });
+        }
 
-      const allCats = await db.select().from(categories);
-      const catMap = new Map<string, number>();
-      for (const c of allCats) catMap.set(c.slug, c.id);
+        const allCats = await db.select().from(categories);
+        const catMap = new Map<string, number>();
+        for (const c of allCats) catMap.set(c.slug, c.id);
 
-      const sampleProducts = [
+        const sampleProducts = [
         {
           categoryId: catMap.get('coffee-cups') ?? null,
           name: 'Double-Wall Kraft Coffee Cup',
@@ -500,20 +512,15 @@ export async function ensureSeeded(): Promise<void> {
         },
       ];
 
-      for (const prod of sampleProducts) {
-        await db
-          .insert(products)
-          .values(prod)
-          .onConflictDoNothing({ target: products.sku });
+        for (const prod of sampleProducts) {
+          await db
+            .insert(products)
+            .values(prod)
+            .onConflictDoNothing({ target: products.sku });
+        }
       }
 
-      // Ensure default settings & content rows exist
-      const existingSettings = await db
-        .select()
-        .from(siteSettings)
-        .where(eq(siteSettings.key, 'settings'))
-        .limit(1);
-
+      // Ensure default settings & content rows exist if missing (without overwriting existing values)
       if (existingSettings.length === 0) {
         await db
           .insert(siteSettings)
@@ -524,18 +531,25 @@ export async function ensureSeeded(): Promise<void> {
           .onConflictDoNothing();
       }
 
-      const existingContent = await db
-        .select()
-        .from(siteSettings)
-        .where(eq(siteSettings.key, 'content'))
-        .limit(1);
-
       if (existingContent.length === 0) {
         await db
           .insert(siteSettings)
           .values({
             key: 'content',
             value: DEFAULT_WEBSITE_CONTENT as unknown as Record<string, unknown>,
+          })
+          .onConflictDoNothing();
+      }
+
+      if (sentinelRows.length === 0) {
+        await db
+          .insert(siteSettings)
+          .values({
+            key: 'bootstrap_initialized_v1',
+            value: {
+              initialized: true,
+              initializedAt: new Date().toISOString(),
+            },
           })
           .onConflictDoNothing();
       }

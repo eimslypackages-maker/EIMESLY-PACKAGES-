@@ -12,6 +12,7 @@ import { useApp, useDocumentMeta } from '../../context/AppContext';
 import { apiFetch } from '../../lib/api';
 import { uploadImageFile } from '../../lib/upload';
 import { SmartImage } from '../../components/SmartImage';
+import { ConfirmDeleteModal } from '../../components/ConfirmDeleteModal';
 import { AdminLayout } from './AdminLayout';
 import type { Category } from '../../shared/types';
 
@@ -29,6 +30,9 @@ export function AdminCategories() {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   useDocumentMeta('Category Management | Eimesly Packages Admin');
 
@@ -133,10 +137,25 @@ export function AdminCategories() {
     await refreshBootstrap();
   };
 
-  const handleDelete = async (cat: Category) => {
-    await apiFetch(`/api/admin/categories/${cat.id}`, { method: 'DELETE' });
-    await loadCategories();
-    await refreshBootstrap();
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await apiFetch(`/api/admin/categories/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+      setCategories((prev) => prev.filter((c) => c.id !== deleteTarget.id));
+      setDeleteTarget(null);
+      await loadCategories();
+      await refreshBootstrap();
+    } catch (err: unknown) {
+      setDeleteError(
+        err instanceof Error ? err.message : 'Failed to delete category'
+      );
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -228,7 +247,11 @@ export function AdminCategories() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(cat)}
+                            onClick={() => {
+                              setDeleteError('');
+                              setDeleteTarget(cat);
+                            }}
+                            aria-label={`Delete ${cat.name}`}
                             className="p-1.5 text-[#202020]/50 hover:text-red-600"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -353,6 +376,24 @@ export function AdminCategories() {
           </div>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        title="Delete Category"
+        itemLabel={
+          deleteTarget ? `${deleteTarget.name} (/${deleteTarget.slug})` : ''
+        }
+        description="Deleting this category will permanently remove it from the storefront and navigation. Any existing products assigned to it will remain in the catalogue as uncategorized."
+        deleting={deleting}
+        error={deleteError}
+        onCancel={() => {
+          if (!deleting) {
+            setDeleteTarget(null);
+            setDeleteError('');
+          }
+        }}
+        onConfirm={handleConfirmDelete}
+      />
     </AdminLayout>
   );
 }

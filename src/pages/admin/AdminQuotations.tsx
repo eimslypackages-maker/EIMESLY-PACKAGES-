@@ -16,6 +16,7 @@ import {
   formatRwf,
   QUOTATION_STATUS_LABELS,
 } from '../../lib/format';
+import { ConfirmDeleteModal } from '../../components/ConfirmDeleteModal';
 import { AdminLayout } from './AdminLayout';
 import type {
   Quotation,
@@ -51,6 +52,9 @@ export function AdminQuotations() {
   const [saving, setSaving] = useState(false);
   const [converting, setConverting] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   // Create new quotation state
   const [newCustomerName, setNewCustomerName] = useState('');
@@ -244,6 +248,29 @@ export function AdminQuotations() {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await apiFetch(`/api/admin/quotations/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+      setQuotations((prev) =>
+        prev.filter((item) => item.id !== deleteTarget.id)
+      );
+      if (selected?.id === deleteTarget.id) setSelected(null);
+      setDeleteTarget(null);
+      await loadQuotations();
+    } catch (err: unknown) {
+      setDeleteError(
+        err instanceof Error ? err.message : 'Failed to delete quotation'
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const newSubtotal = newItems.reduce((s, it) => s + it.lineTotal, 0);
   const newNetTotal = Math.max(
     0,
@@ -332,14 +359,28 @@ export function AdminQuotations() {
                           : '—'}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => openQuote(q)}
-                          className="px-3 py-1.5 text-xs font-semibold border border-[#202020]/20 rounded hover:bg-[#F5F5F5] inline-flex items-center gap-1"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          Manage
-                        </button>
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openQuote(q)}
+                            className="px-3 py-1.5 text-xs font-semibold border border-[#202020]/20 rounded hover:bg-[#F5F5F5] inline-flex items-center gap-1"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            Manage
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteError('');
+                              setDeleteTarget(q);
+                            }}
+                            aria-label={`Delete quotation ${q.quoteNumber}`}
+                            title="Delete quotation permanently"
+                            className="p-1.5 text-[#202020]/50 hover:text-red-600"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -845,6 +886,26 @@ export function AdminQuotations() {
           </div>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        title="Delete Quotation Record"
+        itemLabel={
+          deleteTarget
+            ? `Quotation ${deleteTarget.quoteNumber} — ${deleteTarget.customerName}`
+            : ''
+        }
+        description="Deleting this quotation will permanently remove the quote request, pricing lines, and notes from the database."
+        deleting={deleting}
+        error={deleteError}
+        onCancel={() => {
+          if (!deleting) {
+            setDeleteTarget(null);
+            setDeleteError('');
+          }
+        }}
+        onConfirm={handleConfirmDelete}
+      />
     </AdminLayout>
   );
 }

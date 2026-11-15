@@ -4,6 +4,7 @@ import { useApp, useDocumentMeta } from '../../context/AppContext';
 import { apiFetch } from '../../lib/api';
 import { fileToCompressedBase64, uploadImageFile } from '../../lib/upload';
 import { SmartImage } from '../../components/SmartImage';
+import { ConfirmDeleteModal } from '../../components/ConfirmDeleteModal';
 import { AdminLayout } from './AdminLayout';
 import type { WebsiteContent } from '../../shared/types';
 
@@ -284,6 +285,9 @@ export function AdminMedia() {
   const [editing, setEditing] = useState<MediaRow | null>(null);
   const [editAltText, setEditAltText] = useState('');
   const [editFolder, setEditFolder] = useState('general');
+  const [deleteTarget, setDeleteTarget] = useState<MediaRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   useDocumentMeta('Media Library | Eimesly Packages Admin');
 
@@ -349,9 +353,24 @@ export function AdminMedia() {
     await load();
   };
 
-  const handleDelete = async (id: number) => {
-    await apiFetch(`/api/admin/media/${id}`, { method: 'DELETE' });
-    await load();
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await apiFetch(`/api/admin/media/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+      setItems((prev) => prev.filter((m) => m.id !== deleteTarget.id));
+      setDeleteTarget(null);
+      await load();
+    } catch (err: unknown) {
+      setDeleteError(
+        err instanceof Error ? err.message : 'Failed to delete media asset'
+      );
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const filtered = items.filter(
@@ -471,7 +490,12 @@ export function AdminMedia() {
                       </label>
                       <button
                         type="button"
-                        onClick={() => handleDelete(m.id)}
+                        onClick={() => {
+                          setDeleteError('');
+                          setDeleteTarget(m);
+                        }}
+                        aria-label={`Delete ${m.filename}`}
+                        title="Delete image permanently"
                         className="p-1 text-[#202020]/50 hover:text-red-600"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -547,6 +571,26 @@ export function AdminMedia() {
           </div>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        title="Delete Media Image"
+        itemLabel={
+          deleteTarget
+            ? `${deleteTarget.filename} (${deleteTarget.folder || 'general'})`
+            : ''
+        }
+        description="Deleting this image permanently removes it from the media library. Any product, category, or page referencing its URL will no longer display it."
+        deleting={deleting}
+        error={deleteError}
+        onCancel={() => {
+          if (!deleting) {
+            setDeleteTarget(null);
+            setDeleteError('');
+          }
+        }}
+        onConfirm={handleConfirmDelete}
+      />
     </AdminLayout>
   );
 }

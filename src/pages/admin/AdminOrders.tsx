@@ -8,6 +8,7 @@ import {
   ORDER_STATUS_LABELS,
   PAYMENT_STATUS_LABELS,
 } from '../../lib/format';
+import { ConfirmDeleteModal } from '../../components/ConfirmDeleteModal';
 import { AdminLayout } from './AdminLayout';
 import type {
   Order,
@@ -36,6 +37,9 @@ export function AdminOrders() {
   const [dateTo, setDateTo] = useState('');
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [selected, setSelected] = useState<Order | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const [orderStatus, setOrderStatus] = useState<OrderStatus>('new_order');
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('unpaid');
@@ -276,6 +280,27 @@ export function AdminOrders() {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await apiFetch(`/api/admin/orders/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+      setOrders((prev) => prev.filter((item) => item.id !== deleteTarget.id));
+      if (selected?.id === deleteTarget.id) setSelected(null);
+      setDeleteTarget(null);
+      await loadOrders();
+    } catch (err: unknown) {
+      setDeleteError(
+        err instanceof Error ? err.message : 'Failed to delete order'
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const filtered = orders.filter((o) => {
     if (statusFilter && o.orderStatus !== statusFilter) return false;
     if (typeFilter && o.orderType !== typeFilter) return false;
@@ -493,6 +518,18 @@ export function AdminOrders() {
                           >
                             <Eye className="w-3.5 h-3.5" />
                             View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteError('');
+                              setDeleteTarget(o);
+                            }}
+                            aria-label={`Delete order ${o.orderNumber}`}
+                            title="Delete order permanently"
+                            className="p-1.5 text-[#202020]/50 hover:text-red-600"
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -1097,6 +1134,26 @@ export function AdminOrders() {
           </div>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        title="Delete Order Record"
+        itemLabel={
+          deleteTarget
+            ? `Order ${deleteTarget.orderNumber} — ${deleteTarget.customerName}`
+            : ''
+        }
+        description="Deleting this order record permanently removes its line items and payment records from the ledger."
+        deleting={deleting}
+        error={deleteError}
+        onCancel={() => {
+          if (!deleting) {
+            setDeleteTarget(null);
+            setDeleteError('');
+          }
+        }}
+        onConfirm={handleConfirmDelete}
+      />
     </AdminLayout>
   );
 }
